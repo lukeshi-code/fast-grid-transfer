@@ -325,6 +325,8 @@
     var receivedPackets = 0;
     var duplicatePackets = 0;
     var repeatedVisualFrames = 0;
+    var ROI_SCAN_MAX_WIDTH = 1920;
+    var FULL_SCAN_MAX_WIDTH = 1920;
     var sourcePacketsSeen = {};
     var repairPacketsSeen = {};
     var failedPacketsSeen = {};
@@ -535,7 +537,7 @@
         return;
       }
       var source = getScanSource(vw, vh);
-      var maxW = source.roi ? 1200 : 1920;
+      var maxW = source.roi ? ROI_SCAN_MAX_WIDTH : FULL_SCAN_MAX_WIDTH;
       var scale = Math.min(1, maxW / source.sw);
       canvas.width = Math.max(1, Math.round(source.sw * scale));
       canvas.height = Math.max(1, Math.round(source.sh * scale));
@@ -850,7 +852,8 @@
       var elapsed = (now - lastRateTime) / 1000;
       var fps = Math.round((scanCount - lastScanCount) / elapsed);
       var acceptedDelta = acceptedCount - lastAcceptedCount;
-      var success = scanCount ? Math.round(Math.min(1, acceptedCount / (scanCount * EXPECTED_GRIDS)) * 100) : 0;
+      var effectiveScanSlots = Math.max(0, scanCount * EXPECTED_GRIDS - repeatedVisualFrames);
+      var success = effectiveScanSlots ? Math.round(Math.min(1, acceptedCount / effectiveScanSlots) * 100) : 0;
       lastPacketRate = acceptedDelta / elapsed;
       lastVisualRate = lastPacketRate * PAYLOAD_BYTES;
       lastFps = fps;

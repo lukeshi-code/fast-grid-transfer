@@ -260,6 +260,7 @@
       updateRate();
       if (timer) startPlayback();
     });
+    colorMode.addEventListener('change', autoSizeCanvas);
 
     chooseFileBtn.addEventListener('click', function() { fileInput.click(); });
     chooseFolderBtn.addEventListener('click', function() { folderInput.click(); });
@@ -429,15 +430,17 @@
 
     function autoSizeCanvas() {
       var visible;
+      var minCellPx = Number(colorMode.value) === 3 || (meta && meta.colorBits === 3) ? 9 : 6;
+      var minCanvas = TOTAL_CELLS * minCellPx;
       if (document.fullscreenElement === stage) {
         visible = Math.floor(Math.min(window.innerWidth / GRID_COUNT, window.innerHeight) * 0.94);
       } else {
         var rect = stage.getBoundingClientRect();
         visible = Math.floor(Math.min(rect.width / GRID_COUNT, rect.height));
       }
-      visible = Math.max(600, visible);
-      var optimal = Math.max(TOTAL_CELLS * 4, Math.floor(visible / TOTAL_CELLS) * TOTAL_CELLS);
-      canvasMeta.textContent = 'Canvas: ' + optimal + ' x ' + optimal + ' px, ' + (optimal / TOTAL_CELLS).toFixed(1) + ' px/cell';
+      visible = Math.max(minCanvas, visible);
+      var optimal = Math.max(minCanvas, Math.floor(visible / TOTAL_CELLS) * TOTAL_CELLS);
+      canvasMeta.textContent = 'Canvas: ' + optimal + ' x ' + optimal + ' px, ' + (optimal / TOTAL_CELLS).toFixed(1) + ' px/cell' + (minCellPx > 6 ? ' (8-color target)' : '');
       var changed = false;
       canvases.forEach(function(nextCanvas) {
         if (nextCanvas.width !== optimal || nextCanvas.height !== optimal) {
