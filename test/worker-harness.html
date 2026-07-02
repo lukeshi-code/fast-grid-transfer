@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Worker Harness</title>
+</head>
+<body>
+  <pre id="out">running</pre>
+  <script>
+    var out = document.getElementById('out');
+    var worker = new Worker('../encoder/fast-grid-encoder-worker.js');
+    var frames = 0;
+    var loaded = null;
+    var errors = [];
+
+    worker.onmessage = function(event) {
+      var msg = event.data;
+      if (msg.type === 'loaded') {
+        loaded = msg.meta;
+        out.textContent = 'loaded ' + loaded.totalFrames + ' data frames';
+        for (var i = 0; i < Math.min(16, loaded.cycleSymbols); i++) {
+          worker.postMessage({ type: 'frame', symbolIndex: i });
+        }
+      }
+      if (msg.type === 'frame') {
+        frames++;
+        out.textContent = 'loaded=' + !!loaded + '\nframes=' + frames + '\nsymbol=' + msg.symbolIndex + '\nkind=' + (msg.plan && msg.plan.kind) + '\nbytes=' + msg.frame.byteLength;
+      }
+      if (msg.type === 'error') {
+        errors.push(msg.message);
+        out.textContent = 'error ' + errors.join('\n');
+      }
+    };
+
+    worker.onerror = function(err) {
+      out.textContent = 'worker error: ' + err.message + ' @ ' + err.filename + ':' + err.lineno;
+    };
+
+    var mode = new URLSearchParams(location.search).get('mode') || 'file';
+    if (mode === 'folder') {
+      var a = new File(['alpha\n'.repeat(128)], 'a.txt', { type: 'text/plain' });
+      var b = new File(['beta\n'.repeat(128)], 'b.txt', { type: 'text/plain' });
+      Object.defineProperty(a, 'webkitRelativePath', { value: 'demo-folder/a.txt' });
+      Object.defineProperty(b, 'webkitRelativePath', { value: 'demo-folder/nested/b.txt' });
+      worker.postMessage({ type: 'load', files: [a, b] });
+    } else {
+      var chunks = [];
+      for (var i = 0; i < 256; i++) chunks.push('line ' + i + ' hello worker\n');
+      var file = new File(chunks, 'worker-test.txt', { type: 'text/plain' });
+      worker.postMessage({ type: 'load', file: file });
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,14 @@
+*.pem
+_openssl.cnf
+_ext.cnf
+_key.tmp
+_csr.tmp
+node_modules/
+extension/
+.DS_Store
+Thumbs.db
+*.zip
+*.gif
+*.mp4
+*.webm
+_site/

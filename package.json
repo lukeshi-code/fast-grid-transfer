@@ -1,0 +1,14 @@
+{
+  "name": "fast-grid-transfer",
+  "version": "1.0.0",
+  "description": "Transfer files through a high-density colored screen grid with browser screen capture decoding.",
+  "main": "server.js",
+  "scripts": {
+    "test": "node --test test/test.js",
+    "start": "node server.js"
+  },
+  "keywords": ["file-transfer", "air-gapped", "screen-capture", "visual-grid"],
+  "author": "SDCVO",
+  "license": "MIT",
+  "type": "commonjs"
+}

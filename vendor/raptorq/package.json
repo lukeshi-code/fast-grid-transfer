@@ -1,0 +1,23 @@
+{
+  "name": "raptorq",
+  "collaborators": [
+    "Christopher Berner <christopherberner@gmail.com>"
+  ],
+  "description": "RaptorQ (RFC6330)",
+  "version": "1.7.24",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cberner/raptorq"
+  },
+  "files": [
+    "raptorq_bg.wasm",
+    "raptorq.js",
+    "raptorq.d.ts"
+  ],
+  "module": "raptorq.js",
+  "type": "module",
+  "homepage": "https://github.com/cberner/raptorq",
+  "types": "raptorq.d.ts",
+  "sideEffects": false
+}

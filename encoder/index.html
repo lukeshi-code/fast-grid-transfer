@@ -1,0 +1,535 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Fast Grid Encoder</title>
+  <style>
+    :root {
+      --bg: #171824;
+      --surface: #242638;
+      --border: #383b54;
+      --text: #edf1ff;
+      --dim: #9ca3bf;
+      --accent: #72d2ff;
+      --warn: #ffd166;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      display: grid;
+      grid-template-columns: minmax(320px, 420px) 1fr;
+    }
+    aside {
+      border-right: 1px solid var(--border);
+      background: var(--surface);
+      padding: 22px;
+      overflow: auto;
+    }
+    main {
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+    h1 { font-size: 1.25rem; margin: 0 0 4px; }
+    p { color: var(--dim); line-height: 1.45; }
+    a { color: var(--accent); }
+    label { display: block; font-size: 0.86rem; color: var(--dim); margin: 16px 0 7px; }
+    input[type="file"], input[type="range"], select { width: 100%; }
+    select {
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: #10111a;
+      color: var(--text);
+      padding: 9px 10px;
+    }
+    button {
+      border: 0;
+      border-radius: 6px;
+      background: var(--accent);
+      color: #111;
+      font-weight: 700;
+      padding: 10px 14px;
+      cursor: pointer;
+    }
+    button.secondary {
+      background: transparent;
+      color: var(--accent);
+      border: 1px solid var(--accent);
+    }
+    button:disabled { opacity: 0.45; cursor: default; }
+    .source-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 16px; }
+    .metric {
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 10px;
+      margin-top: 10px;
+      background: rgba(255,255,255,0.03);
+    }
+    .metric strong { color: var(--text); display: block; font-size: 0.95rem; }
+    .metric span { color: var(--dim); font-size: 0.82rem; }
+    .progress {
+      height: 10px;
+      border-radius: 5px;
+      overflow: hidden;
+      background: #10111a;
+      margin-top: 10px;
+      border: 1px solid var(--border);
+    }
+    .fill { height: 100%; width: 0%; background: var(--accent); transition: width 0.08s linear; }
+    .stage {
+      width: min(92vw, 172vh);
+      max-width: 1500px;
+      aspect-ratio: 2 / 1;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+      place-items: center;
+    }
+    .stage:fullscreen {
+      width: 100vw;
+      height: 100vh;
+      max-width: none;
+      aspect-ratio: auto;
+      padding: 0;
+      background: #05060a;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 2vh;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+    .stage:fullscreen .grid-canvas {
+      width: min(47vw, 94vh);
+      height: min(47vw, 94vh);
+      max-width: min(47vw, 94vh);
+      max-height: min(47vw, 94vh);
+    }
+    .grid-canvas {
+      width: 100%;
+      aspect-ratio: 1;
+      image-rendering: pixelated;
+      background: #05060a;
+      border-radius: 4px;
+      box-shadow: 0 0 0 1px #000, 0 18px 60px rgba(0,0,0,0.45);
+    }
+    .hint { font-size: 0.82rem; color: var(--warn); margin-top: 14px; }
+    @media (max-width: 900px) {
+      body { grid-template-columns: 1fr; }
+      aside { border-right: 0; border-bottom: 1px solid var(--border); }
+      .stage { width: min(92vw, 78vh); grid-template-columns: 1fr; aspect-ratio: auto; }
+      .actions { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <aside>
+    <h1>Fast Grid Encoder</h1>
+    <p>Streaming visual transfer. File chunks are read by a Web Worker and rendered frame-by-frame.</p>
+
+    <label>Source</label>
+    <div class="source-actions">
+      <button id="choose-file">Load File</button>
+      <button id="choose-folder" class="secondary">Load Folder</button>
+    </div>
+    <input id="file" type="file" hidden>
+    <input id="folder" type="file" webkitdirectory multiple hidden>
+
+    <label for="fps">FPS: <span id="fps-val">10</span></label>
+    <input id="fps" type="range" min="1" max="30" value="10">
+
+    <label for="color-mode">Color mode</label>
+    <select id="color-mode">
+      <option value="2" selected>4 colors - stable</option>
+      <option value="3">8 colors - high speed</option>
+    </select>
+
+    <div class="actions">
+      <button id="play" disabled>Play</button>
+      <button id="pause" class="secondary" disabled>Pause</button>
+      <button id="fullscreen" class="secondary">Fullscreen Grid</button>
+    </div>
+
+    <div class="metric"><strong id="file-meta">No file loaded</strong><span id="encode-meta">Choose a file to prepare stream metadata.</span></div>
+    <div class="metric"><strong id="frame-meta">Frame 0 / 0</strong><span id="rate-meta">0 KB/s raw visual payload</span></div>
+    <div class="metric"><strong id="canvas-meta">Canvas: auto</strong><span>Grid size is matched to the visible display area.</span></div>
+    <div class="progress"><div class="fill" id="progress"></div></div>
+    <p class="hint">No full-file packaging is done in the UI thread. Large files are sliced by the worker while playback runs.</p>
+  </aside>
+
+  <main>
+    <div class="stage" id="stage">
+      <canvas id="grid" class="grid-canvas" width="600" height="600"></canvas>
+      <canvas id="grid2" class="grid-canvas" width="600" height="600"></canvas>
+    </div>
+  </main>
+
+  <script>
+    var TOTAL_CELLS = 100;
+    var DATA_OFFSET = 18;
+    var DATA_CELLS = 64;
+    var MARKER_CELLS = 18;
+    var GRID_COUNT = 2;
+    var APRILTAG_BASES = [0, 4];
+    var APRILTAG_CODES = [
+      0x0d7e00984b, 0x0dda664ca7, 0x0dc4a1c821, 0x0e17b470e9,
+      0x0ef91d01b1, 0x0f429cdd73, 0x005da29225, 0x01106cba43
+    ];
+    var APRILTAG_BIT_X = [1,2,3,4,5,2,3,4,3,6,6,6,6,6,5,5,5,4,6,5,4,3,2,5,4,3,4,1,1,1,1,1,2,2,2,3];
+    var APRILTAG_BIT_Y = [1,1,1,1,1,2,2,2,3,1,2,3,4,5,2,3,4,3,6,6,6,6,6,5,5,5,4,6,5,4,3,2,5,4,3,4];
+    var COLORS = [
+      '#08090d', '#f8fbff', '#00d7ff', '#ffbe2e',
+      '#ff9f0a', '#c7f464', '#9ca3af', '#334155'
+    ];
+
+    var fileInput = document.getElementById('file');
+    var folderInput = document.getElementById('folder');
+    var chooseFileBtn = document.getElementById('choose-file');
+    var chooseFolderBtn = document.getElementById('choose-folder');
+    var fpsInput = document.getElementById('fps');
+    var colorMode = document.getElementById('color-mode');
+    var fpsVal = document.getElementById('fps-val');
+    var playBtn = document.getElementById('play');
+    var pauseBtn = document.getElementById('pause');
+    var fullscreenBtn = document.getElementById('fullscreen');
+    var fileMeta = document.getElementById('file-meta');
+    var encodeMeta = document.getElementById('encode-meta');
+    var frameMeta = document.getElementById('frame-meta');
+    var rateMeta = document.getElementById('rate-meta');
+    var canvasMeta = document.getElementById('canvas-meta');
+    var progress = document.getElementById('progress');
+    var stage = document.getElementById('stage');
+    var canvases = [document.getElementById('grid'), document.getElementById('grid2')];
+    var contexts = canvases.map(function(nextCanvas) { return nextCanvas.getContext('2d'); });
+    var worker = new Worker('fast-grid-encoder-worker.js');
+
+    var meta = null;
+    var frameIndex = 0;
+    var timer = null;
+    var fps = Number(fpsInput.value);
+    var frameCache = {};
+    var framePlans = {};
+    var pendingFrames = {};
+    var warmupTarget = 8;
+    var lastDrawnFrames = [];
+    var markerPatterns = [];
+
+    worker.onmessage = function(event) {
+      var msg = event.data;
+      if (msg.type === 'loaded') {
+        meta = msg.meta;
+        frameIndex = 0;
+        frameCache = {};
+        framePlans = {};
+        pendingFrames = {};
+        lastDrawnFrames = [];
+        fileMeta.textContent = meta.name;
+        encodeMeta.textContent = formatSize(meta.fileSize) + ' source, ' + formatSize(meta.streamLength) + ' transfer stream, ' + meta.totalFrames + ' source symbols, ' + meta.payloadBytes + ' bytes/frame/grid, 2-grid RaptorQ 64x64 ' + (meta.colorBits === 3 ? '8-color' : '4-color') + (meta.compression === 'gzip' ? ', gzip ' + formatSize(meta.compressedSize) : '') + (meta.kind === 'folder' ? ', folder tar' : '');
+        playBtn.disabled = false;
+        pauseBtn.disabled = false;
+        updateRate();
+        prefetchFrom(0);
+        drawFrames();
+      }
+      if (msg.type === 'frame') {
+        frameCache[msg.symbolIndex] = new Uint8Array(msg.frame);
+        framePlans[msg.symbolIndex] = msg.plan || null;
+        delete pendingFrames[msg.symbolIndex];
+        if (msg.symbolIndex >= frameIndex && msg.symbolIndex < frameIndex + GRID_COUNT) drawFrames();
+      }
+      if (msg.type === 'error') {
+        showWorkerError(msg.message || 'Worker error');
+      }
+    };
+
+    worker.onerror = function(err) {
+      showWorkerError(err.message || 'Worker error');
+    };
+
+    fpsInput.addEventListener('input', function() {
+      fps = Number(fpsInput.value);
+      fpsVal.textContent = fps;
+      updateRate();
+      if (timer) startPlayback();
+    });
+
+    chooseFileBtn.addEventListener('click', function() { fileInput.click(); });
+    chooseFolderBtn.addEventListener('click', function() { folderInput.click(); });
+
+    fileInput.addEventListener('change', function() {
+      var file = fileInput.files && fileInput.files[0];
+      if (!file) return;
+      loadSource({ type: 'load', file: file });
+    });
+
+    folderInput.addEventListener('change', function() {
+      var files = Array.from(folderInput.files || []);
+      if (!files.length) return;
+      loadSource({ type: 'load', files: files });
+    });
+
+    function loadSource(message) {
+      stopPlayback();
+      meta = null;
+      frameIndex = 0;
+      frameCache = {};
+      framePlans = {};
+      pendingFrames = {};
+      lastDrawnFrames = [];
+      message.colorBits = Number(colorMode.value);
+      playBtn.disabled = true;
+      pauseBtn.disabled = true;
+      fileMeta.textContent = message.file ? message.file.name : 'Folder';
+      encodeMeta.textContent = 'Preparing stream metadata in worker...';
+      progress.style.width = '0%';
+      worker.postMessage(message);
+    }
+
+    function showWorkerError(message) {
+      stopPlayback();
+      pendingFrames = {};
+      encodeMeta.textContent = 'Worker error: ' + message;
+      frameMeta.textContent = 'Frame ' + (meta ? frameIndex + 1 : 0) + ' / ' + (meta ? meta.totalFrames : 0) + ' (error)';
+    }
+
+    playBtn.addEventListener('click', startPlayback);
+    pauseBtn.addEventListener('click', stopPlayback);
+    fullscreenBtn.addEventListener('click', function() {
+      if (document.fullscreenElement) document.exitFullscreen();
+      else stage.requestFullscreen();
+    });
+
+    document.addEventListener('fullscreenchange', function() {
+      fullscreenBtn.textContent = document.fullscreenElement ? 'Exit Fullscreen' : 'Fullscreen Grid';
+      setTimeout(autoSizeCanvas, 60);
+    });
+
+    window.addEventListener('resize', autoSizeCanvas);
+    if ('ResizeObserver' in window) {
+      new ResizeObserver(autoSizeCanvas).observe(stage);
+    }
+
+    function startPlayback() {
+      if (!meta) return;
+      stopPlayback();
+      prefetchFrom(frameIndex);
+      if (!frameCache[frameIndex]) {
+        frameMeta.textContent = 'Frame ' + (frameIndex + 1) + ' / ' + meta.totalFrames + ' (warming up)';
+      }
+      timer = setInterval(function() {
+        tickPlayback();
+      }, 1000 / fps);
+      playBtn.disabled = true;
+      pauseBtn.disabled = false;
+    }
+
+    function stopPlayback() {
+      if (timer) clearInterval(timer);
+      timer = null;
+      playBtn.disabled = !meta;
+      pauseBtn.disabled = !meta;
+    }
+
+    function showCurrentFrame() {
+      prefetchFrom(frameIndex);
+      drawFrames();
+    }
+
+    function tickPlayback() {
+      prefetchFrom(frameIndex);
+      for (var slot = 0; slot < GRID_COUNT; slot++) requestFrame(frameIndex + slot);
+      var ready = true;
+      for (var check = 0; check < GRID_COUNT; check++) {
+        if (!frameCache[frameIndex + check]) ready = false;
+      }
+      if (!ready) {
+        drawFrames('waiting for worker');
+        return;
+      }
+      drawFrames();
+      for (var keep = 0; keep < GRID_COUNT; keep++) lastDrawnFrames[keep] = frameCache[frameIndex + keep];
+      frameIndex += GRID_COUNT;
+      prefetchFrom(frameIndex);
+    }
+
+    function prefetchFrom(start) {
+      if (!meta) return;
+      for (var i = 0; i < warmupTarget; i++) {
+        requestFrame(start + i);
+      }
+    }
+
+    function requestFrame(symbolIndex) {
+      if (!meta || frameCache[symbolIndex] || pendingFrames[symbolIndex]) return;
+      pendingFrames[symbolIndex] = true;
+      worker.postMessage({ type: 'frame', symbolIndex: symbolIndex });
+      trimFrameCache(symbolIndex);
+    }
+
+    function trimFrameCache(anchor) {
+      var keep = warmupTarget + 16;
+      Object.keys(frameCache).forEach(function(key) {
+        var idx = Number(key);
+        if (Math.abs(idx - anchor) > keep) {
+          delete frameCache[key];
+          delete framePlans[key];
+        }
+      });
+    }
+
+    function drawFrames(note) {
+      for (var slot = 0; slot < GRID_COUNT; slot++) {
+        var symbolIndex = frameIndex + slot;
+        var frame = frameCache[symbolIndex] || lastDrawnFrames[slot] || null;
+        drawFrameSlot(slot, frame, note);
+      }
+      var total = meta ? meta.cycleSymbols : 0;
+      var first = total ? (frameIndex % total) + 1 : 0;
+      var last = total ? ((frameIndex + GRID_COUNT - 1) % total) + 1 : 0;
+      frameMeta.textContent = 'Symbols ' + first + '-' + last + ' / ' + total + (note ? ' (' + note + ')' : '');
+      progress.style.width = total ? ((first / total) * 100).toFixed(0) + '%' : '0%';
+      updateRate();
+    }
+
+    function drawFrameSlot(slot, frame, note) {
+      var canvas = canvases[slot];
+      var ctx = contexts[slot];
+      var size = canvas.width;
+      var cell = size / TOTAL_CELLS;
+      var markerBase = APRILTAG_BASES[slot] || 0;
+      ctx.fillStyle = '#05060a';
+      ctx.fillRect(0, 0, size, size);
+      drawAprilTagMarker(ctx, 0, 0, markerBase + 0, cell);
+      drawAprilTagMarker(ctx, TOTAL_CELLS - MARKER_CELLS, 0, markerBase + 1, cell);
+      drawAprilTagMarker(ctx, 0, TOTAL_CELLS - MARKER_CELLS, markerBase + 2, cell);
+      drawAprilTagMarker(ctx, TOTAL_CELLS - MARKER_CELLS, TOTAL_CELLS - MARKER_CELLS, markerBase + 3, cell);
+      drawColorCalibration(ctx, cell);
+      drawSyncLines(ctx, cell);
+
+      if (frame) {
+        for (var y = 0; y < DATA_CELLS; y++) {
+          for (var x = 0; x < DATA_CELLS; x++) {
+            var cellIndex = y * DATA_CELLS + x;
+            var bits = meta && meta.colorBits === 3 ? 3 : 2;
+            var v = readBits(frame, cellIndex, bits);
+            ctx.fillStyle = COLORS[v];
+            ctx.fillRect((x + DATA_OFFSET) * cell, (y + DATA_OFFSET) * cell, Math.ceil(cell), Math.ceil(cell));
+          }
+        }
+      }
+    }
+
+    function autoSizeCanvas() {
+      var visible;
+      if (document.fullscreenElement === stage) {
+        visible = Math.floor(Math.min(window.innerWidth / GRID_COUNT, window.innerHeight) * 0.94);
+      } else {
+        var rect = stage.getBoundingClientRect();
+        visible = Math.floor(Math.min(rect.width / GRID_COUNT, rect.height));
+      }
+      visible = Math.max(600, visible);
+      var optimal = Math.max(TOTAL_CELLS * 4, Math.floor(visible / TOTAL_CELLS) * TOTAL_CELLS);
+      canvasMeta.textContent = 'Canvas: ' + optimal + ' x ' + optimal + ' px, ' + (optimal / TOTAL_CELLS).toFixed(1) + ' px/cell';
+      var changed = false;
+      canvases.forEach(function(nextCanvas) {
+        if (nextCanvas.width !== optimal || nextCanvas.height !== optimal) {
+          nextCanvas.width = optimal;
+          nextCanvas.height = optimal;
+          var nextCtx = contexts[canvases.indexOf(nextCanvas)];
+          if (nextCtx) nextCtx.imageSmoothingEnabled = false;
+          changed = true;
+        }
+      });
+      if (changed) drawFrames();
+    }
+
+    function drawAprilTagMarker(ctx, x, y, id, cell) {
+      var pattern = getAprilTagPattern(id);
+      ctx.save();
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(pattern, x * cell, y * cell, MARKER_CELLS * cell, MARKER_CELLS * cell);
+      ctx.restore();
+    }
+
+    function getAprilTagPattern(id) {
+      if (markerPatterns[id]) return markerPatterns[id];
+      var pattern = document.createElement('canvas');
+      pattern.width = 10;
+      pattern.height = 10;
+      var tagCtx = pattern.getContext('2d');
+      var code = APRILTAG_CODES[id] || 0;
+      tagCtx.fillStyle = '#05060a';
+      tagCtx.fillRect(0, 0, 10, 10);
+      tagCtx.fillStyle = '#f8fbff';
+      for (var i = 0; i < 9; i++) {
+        tagCtx.fillRect(i, 0, 1, 1);
+        tagCtx.fillRect(9, i, 1, 1);
+        tagCtx.fillRect(i + 1, 9, 1, 1);
+        tagCtx.fillRect(0, i + 1, 1, 1);
+      }
+      for (var bit = 0; bit < 36; bit++) {
+        if (Math.floor(code / Math.pow(2, 35 - bit)) % 2 === 0) continue;
+        tagCtx.fillRect(APRILTAG_BIT_X[bit] + 1, APRILTAG_BIT_Y[bit] + 1, 1, 1);
+      }
+      markerPatterns[id] = pattern;
+      return pattern;
+    }
+
+    function drawSyncLines(ctx, cell) {
+      for (var i = DATA_OFFSET; i < DATA_OFFSET + DATA_CELLS; i++) {
+        ctx.fillStyle = (i & 1) ? '#f8fbff' : '#08090d';
+        ctx.fillRect(i * cell, (DATA_OFFSET - 1) * cell, Math.ceil(cell), Math.ceil(cell));
+        ctx.fillRect(i * cell, (TOTAL_CELLS - DATA_OFFSET) * cell, Math.ceil(cell), Math.ceil(cell));
+        ctx.fillRect((DATA_OFFSET - 1) * cell, i * cell, Math.ceil(cell), Math.ceil(cell));
+        ctx.fillRect((TOTAL_CELLS - DATA_OFFSET) * cell, i * cell, Math.ceil(cell), Math.ceil(cell));
+      }
+    }
+
+    function drawColorCalibration(ctx, cell) {
+      var topRow = 3;
+      var bottomRow = TOTAL_CELLS - 4;
+      for (var i = 0; i < DATA_CELLS; i++) {
+        ctx.fillStyle = COLORS[i % COLORS.length];
+        ctx.fillRect((DATA_OFFSET + i) * cell, topRow * cell, Math.ceil(cell), Math.ceil(cell));
+        ctx.fillRect((DATA_OFFSET + i) * cell, bottomRow * cell, Math.ceil(cell), Math.ceil(cell));
+      }
+    }
+
+    function updateRate() {
+      var payload = meta ? meta.payloadBytes : 0;
+      var text = formatSize(payload * fps * GRID_COUNT) + '/s raw visual payload';
+      if (meta) {
+        text += ', ' + meta.totalFrames + ' source symbols, one RaptorQ cycle about ' + (meta.cycleSymbols / fps).toFixed(1) + 's';
+        text += ', repairs/block ' + meta.repairPacketsPerBlock;
+      }
+      rateMeta.textContent = text;
+    }
+
+    function readBits(bytes, index, bits) {
+      var bit = index * bits;
+      var byteIndex = bit >> 3;
+      var shift = bit & 7;
+      var value = bytes[byteIndex] >> shift;
+      if (shift + bits > 8 && byteIndex + 1 < bytes.length) value |= bytes[byteIndex + 1] << (8 - shift);
+      return value & ((1 << bits) - 1);
+    }
+
+    function formatSize(bytes) {
+      if (bytes < 1024) return bytes + ' B';
+      if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+      return (bytes / 1024 / 1024).toFixed(2) + ' MB';
+    }
+
+    autoSizeCanvas();
+    drawFrames();
+  </script>
+</body>
+</html>
