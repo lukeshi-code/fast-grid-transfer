@@ -998,6 +998,7 @@
       downloadBtn.disabled = false;
       detailEl.textContent = decodedName + ' ready, ' + formatSize(file.bytes.length) + (file.sha256 ? ', SHA-256 ok' : '');
       renderSummary();
+      renderDiagnostics();
       downloadBtn.click();
     }
 
