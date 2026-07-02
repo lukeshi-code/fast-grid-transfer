@@ -880,7 +880,6 @@
       var repair = repairPacketCount + ' repair';
       if (failedPacketCount) repair += ', ' + failedPacketCount + ' failed';
       if (duplicatePackets) repair += ', ' + duplicatePackets + ' duplicate';
-      if (repeatedVisualFrames) repair += ', ' + repeatedVisualFrames + ' rescan';
       if (recoveredSourceSymbols.length) repair += ', ' + recoveredSourceSymbols.length + ' recovered';
       repairText.textContent = repair;
 
@@ -949,7 +948,6 @@
         ['Source packets', sourcePacketCount],
         ['Repair packets', repairPacketCount],
         ['Failed source packets', failedPacketCount],
-        ['Repeated visual frames', repeatedVisualFrames],
         ['Last packet kind', lastPacketKind],
         ['Recovered source', recoveredSourceSymbols.length ? summarizeList(recoveredSourceSymbols) : '-'],
         ['Duplicates', duplicatePackets],
