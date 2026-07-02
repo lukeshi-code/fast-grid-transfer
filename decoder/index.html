@@ -793,7 +793,9 @@
 
     function markFailedFrameFromDebug(debug) {
       if (!debug) return;
-      var reason = debug.parse2 || debug.parse3 || '';
+      var reason = [debug.parse2, debug.parse3].filter(Boolean).find(function(nextReason) {
+        return nextReason.indexOf('checksum') === 0;
+      }) || '';
       if (reason.indexOf('checksum') !== 0) return;
       var total = Number(debug.parsedSourceSymbols || 0);
       var packetIndex = Number(debug.parsedPacketIndex);
