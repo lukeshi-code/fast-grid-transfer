@@ -301,6 +301,7 @@
     var raf = null;
     var busy = false;
     var seenPackets = {};
+    var seenVisualFrames = {};
     var expectedTotal = 0;
     var cells = [];
     var decodedBlob = null;
@@ -322,6 +323,7 @@
     var missStats = {};
     var receivedPackets = 0;
     var duplicatePackets = 0;
+    var repeatedVisualFrames = 0;
     var sourcePacketsSeen = {};
     var repairPacketsSeen = {};
     var failedPacketsSeen = {};
@@ -387,6 +389,12 @@
     };
 
     function handleAcceptedFrame(frame, updateRoi) {
+      var visualKey = (frame.gridSlot == null ? 0 : frame.gridSlot) + ':' + frame.symbolIndex;
+      if (seenVisualFrames[visualKey]) {
+        repeatedVisualFrames++;
+        return;
+      }
+      seenVisualFrames[visualKey] = true;
       lastAcceptedFrame = frame;
       acceptedCount++;
       if (updateRoi !== false) updateRoiFromWorker(frame.bbox, false, [frame.gridSlot]);
@@ -459,6 +467,7 @@
     function resetState() {
       stopCapture();
       seenPackets = {};
+      seenVisualFrames = {};
       expectedTotal = 0;
       cells = [];
       decodedBlob = null;
@@ -480,6 +489,7 @@
       missStats = {};
       receivedPackets = 0;
       duplicatePackets = 0;
+      repeatedVisualFrames = 0;
       sourcePacketsSeen = {};
       repairPacketsSeen = {};
       failedPacketsSeen = {};
@@ -848,6 +858,7 @@
       var repair = repairPacketCount + ' repair';
       if (failedPacketCount) repair += ', ' + failedPacketCount + ' failed';
       if (duplicatePackets) repair += ', ' + duplicatePackets + ' duplicate';
+      if (repeatedVisualFrames) repair += ', ' + repeatedVisualFrames + ' rescan';
       if (recoveredSourceSymbols.length) repair += ', ' + recoveredSourceSymbols.length + ' recovered';
       repairText.textContent = repair;
 
@@ -916,6 +927,7 @@
         ['Source packets', sourcePacketCount],
         ['Repair packets', repairPacketCount],
         ['Failed source packets', failedPacketCount],
+        ['Repeated visual frames', repeatedVisualFrames],
         ['Last packet kind', lastPacketKind],
         ['Recovered source', recoveredSourceSymbols.length ? summarizeList(recoveredSourceSymbols) : '-'],
         ['Duplicates', duplicatePackets],
