@@ -41,7 +41,7 @@ self.onmessage = function(event) {
 };
 
 function setColorBits(bits) {
-  colorBits = bits === 3 ? 3 : 2;
+  colorBits = bits === 3 || bits === 8 ? 3 : 2;
   frameBytes = getFrameBytes(colorBits);
   payloadBytes = frameBytes - HEADER_BYTES;
   rqMtu = payloadBytes - 4;

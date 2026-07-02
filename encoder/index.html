@@ -221,6 +221,7 @@
     var warmupTarget = 8;
     var lastDrawnFrames = [];
     var markerPatterns = [];
+    var currentSource = null;
 
     worker.onmessage = function(event) {
       var msg = event.data;
@@ -260,7 +261,10 @@
       updateRate();
       if (timer) startPlayback();
     });
-    colorMode.addEventListener('change', autoSizeCanvas);
+    colorMode.addEventListener('change', function() {
+      autoSizeCanvas();
+      if (currentSource) loadSource(currentSource);
+    });
 
     chooseFileBtn.addEventListener('click', function() { fileInput.click(); });
     chooseFolderBtn.addEventListener('click', function() { folderInput.click(); });
@@ -268,16 +272,18 @@
     fileInput.addEventListener('change', function() {
       var file = fileInput.files && fileInput.files[0];
       if (!file) return;
-      loadSource({ type: 'load', file: file });
+      currentSource = { type: 'load', file: file };
+      loadSource(currentSource);
     });
 
     folderInput.addEventListener('change', function() {
       var files = Array.from(folderInput.files || []);
       if (!files.length) return;
-      loadSource({ type: 'load', files: files });
+      currentSource = { type: 'load', files: files };
+      loadSource(currentSource);
     });
 
-    function loadSource(message) {
+    function loadSource(source) {
       stopPlayback();
       meta = null;
       frameIndex = 0;
@@ -285,6 +291,9 @@
       framePlans = {};
       pendingFrames = {};
       lastDrawnFrames = [];
+      var message = { type: source.type };
+      if (source.file) message.file = source.file;
+      if (source.files) message.files = source.files;
       message.colorBits = Number(colorMode.value);
       playBtn.disabled = true;
       pauseBtn.disabled = true;
