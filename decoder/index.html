@@ -294,6 +294,7 @@
     var worker = new Worker('fast-grid-worker.js');
     var PAYLOAD_BYTES = 3408;
     var EXPECTED_GRIDS = 2;
+    var ROI_TRACKED_GRIDS = 2;
     var stream = null;
     var canvas = document.createElement('canvas');
     var ctx = canvas.getContext('2d', { willReadFrequently: true });
@@ -573,6 +574,12 @@
       lastDetectedBox = next;
       lastBoxConfidence = bbox.confidence || 0;
       next = expandParallelGridRoi(next, slots);
+      if (ROI_TRACKED_GRIDS === 2 && !weak) {
+        roi = next;
+        roiMisses = 0;
+        roiFallbackLevel = 0;
+        return;
+      }
       var weight = weak ? 0.22 : (lastBoxConfidence > 0.65 ? 0.8 : 0.55);
       if (roi) {
         roi.x = roi.x * (1 - weight) + next.x * weight;
@@ -587,9 +594,9 @@
     }
 
     function expandParallelGridRoi(box, slots) {
-      if (EXPECTED_GRIDS < 2 || !box) return box;
+      if (ROI_TRACKED_GRIDS < 2 || !box) return box;
       var aspect = box.width / Math.max(1, box.height);
-      if (aspect >= 1.35) return box;
+      if (aspect >= 1.35) return normalizeWideRoi(box);
 
       var hasSlot0 = slots && slots.indexOf(0) !== -1;
       var hasSlot1 = slots && slots.indexOf(1) !== -1;
@@ -612,6 +619,21 @@
         y: clampedY,
         width: Math.max(1, Math.min(videoW - clampedX, width - (clampedX - x))),
         height: Math.max(1, Math.min(videoH - clampedY, height - (clampedY - y)))
+      };
+    }
+
+    function normalizeWideRoi(box) {
+      var videoW = video.videoWidth || (pendingScan ? pendingScan.sw : 0) || (box.x + box.width);
+      var videoH = video.videoHeight || (pendingScan ? pendingScan.sh : 0) || (box.y + box.height);
+      var marginX = box.width * 0.06;
+      var marginY = box.height * 0.10;
+      var x = Math.max(0, box.x - marginX);
+      var y = Math.max(0, box.y - marginY);
+      return {
+        x: x,
+        y: y,
+        width: Math.max(1, Math.min(videoW - x, box.width + marginX * 2)),
+        height: Math.max(1, Math.min(videoH - y, box.height + marginY * 2))
       };
     }
 
