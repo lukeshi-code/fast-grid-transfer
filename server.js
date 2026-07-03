@@ -4,6 +4,7 @@ var fs = require('fs');
 var path = require('path');
 var os = require('os');
 var crypto = require('crypto');
+var childProcess = require('child_process');
 
 var PORT = Number(process.env.PORT || 3000);
 var DIR = __dirname;
@@ -27,8 +28,114 @@ var mimeTypes = {
   '.wasm': 'application/wasm'
 };
 
+function sendJson(res, status, body) {
+  res.writeHead(status, {
+    'Content-Type': 'application/json',
+    'Cache-Control': 'no-store, max-age=0',
+    'Pragma': 'no-cache'
+  });
+  res.end(JSON.stringify(body));
+}
+
+function readJsonBody(req, done) {
+  var chunks = [];
+  var size = 0;
+  req.on('data', function(chunk) {
+    size += chunk.length;
+    if (size > 1024 * 1024) {
+      req.destroy();
+      done(new Error('Request body too large'));
+      return;
+    }
+    chunks.push(chunk);
+  });
+  req.on('end', function() {
+    try {
+      done(null, chunks.length ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : {});
+    } catch (err) {
+      done(new Error('Invalid JSON body'));
+    }
+  });
+  req.on('error', done);
+}
+
+function handleDeltaDefaults(req, res) {
+  sendJson(res, 200, {
+    repo: DIR,
+    out: path.join(DIR, 'transfer-delta'),
+    tar: path.join(DIR, 'transfer-delta.tar')
+  });
+}
+
+function handleDeltaCollect(req, res) {
+  readJsonBody(req, function(err, body) {
+    if (err) {
+      sendJson(res, 400, { ok: false, error: err.message });
+      return;
+    }
+    try {
+      var repo = String(body.repo || '').trim();
+      if (!repo) throw new Error('Repository path is required');
+      var out = String(body.out || path.join(DIR, 'transfer-delta')).trim();
+      var tar = body.tar === false ? false : String(body.tar || path.join(DIR, 'transfer-delta.tar')).trim();
+      var vcs = String(body.vcs || 'auto').trim();
+      var args = [path.join(DIR, 'scripts', 'collect-changes.js'), '--repo', repo, '--vcs', vcs, '--out', out];
+
+      if (vcs === 'svn') {
+        if (!body.from) throw new Error('SVN start revision is required');
+        args.push('--from', String(body.from).trim());
+        args.push('--to', String(body.to || 'HEAD').trim());
+      } else {
+        if (!body.base) throw new Error('Git base ref is required');
+        args.push('--base', String(body.base).trim());
+        args.push('--head', String(body.head || 'HEAD').trim());
+        if (body.includeWorking) args.push('--include-working');
+      }
+      if (tar) args.push('--tar', tar);
+
+      var result = childProcess.spawnSync(process.execPath, args, {
+        cwd: DIR,
+        encoding: 'utf8',
+        windowsHide: true,
+        maxBuffer: 20 * 1024 * 1024
+      });
+      if (result.error) throw result.error;
+      if (result.status !== 0) {
+        sendJson(res, 500, {
+          ok: false,
+          error: result.stderr || result.stdout || 'Delta package generation failed',
+          stdout: result.stdout || '',
+          stderr: result.stderr || ''
+        });
+        return;
+      }
+
+      var manifestPath = path.join(path.resolve(out), 'manifest.json');
+      var manifest = fs.existsSync(manifestPath) ? JSON.parse(fs.readFileSync(manifestPath, 'utf8')) : null;
+      sendJson(res, 200, {
+        ok: true,
+        out: path.resolve(out),
+        tar: tar ? path.resolve(tar) : null,
+        manifest: manifest,
+        stdout: result.stdout || '',
+        stderr: result.stderr || ''
+      });
+    } catch (error) {
+      sendJson(res, 400, { ok: false, error: error.message });
+    }
+  });
+}
+
 function handler(req, res) {
   var urlPath = req.url.split('?')[0];
+  if (req.method === 'GET' && urlPath === '/api/delta/defaults') {
+    handleDeltaDefaults(req, res);
+    return;
+  }
+  if (req.method === 'POST' && urlPath === '/api/delta/collect') {
+    handleDeltaCollect(req, res);
+    return;
+  }
   var filePath = resolveSafePath(DIR, urlPath);
   if (!filePath) { res.writeHead(403); res.end(); return; }
 
@@ -168,6 +275,7 @@ function startHTTPS() {
     console.log('');
     console.log('  Fast Grid Encoder: https://localhost:' + PORT + '/encoder/');
     console.log('  Fast Grid Decoder: https://localhost:' + PORT + '/decoder/');
+    console.log('  Delta Packager:    https://localhost:' + PORT + '/delta/');
   });
 }
 
@@ -178,6 +286,7 @@ function startHTTP() {
     console.log('NOTE: Screen capture works best from localhost or HTTPS.');
     console.log('Fast Grid Encoder: http://localhost:' + PORT + '/encoder/');
     console.log('Fast Grid Decoder: http://localhost:' + PORT + '/decoder/');
+    console.log('Delta Packager:    http://localhost:' + PORT + '/delta/');
   });
 }
 

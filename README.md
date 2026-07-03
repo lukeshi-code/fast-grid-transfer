@@ -41,6 +41,14 @@ Folder transfers are streamed as a `.tar` archive so the encoder does not need t
 
 For large code directories, generate a small delta package from Git or SVN metadata and transfer only the changed files.
 
+Open the visual packager:
+
+```text
+http://localhost:3000/delta/
+```
+
+Fill in the repository path, Git base or SVN revision range, then click `Build Delta Package`.
+
 Git example:
 
 ```bash

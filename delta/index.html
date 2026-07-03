@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Delta Packager</title>
+  <style>
+    :root {
+      --bg: #171824;
+      --surface: #242638;
+      --surface-2: #2b2e43;
+      --border: #3c405c;
+      --text: #edf1ff;
+      --dim: #aeb5d1;
+      --accent: #72d2ff;
+      --ok: #9ae6b4;
+      --warn: #ffd166;
+      --err: #ff6b8a;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      padding: 20px 24px;
+      border-bottom: 1px solid var(--border);
+      background: #1d1f2e;
+    }
+    h1 { margin: 0; font-size: 1.35rem; letter-spacing: 0; }
+    a { color: var(--accent); }
+    main {
+      display: grid;
+      grid-template-columns: minmax(330px, 430px) minmax(0, 1fr);
+      gap: 18px;
+      padding: 18px;
+    }
+    section {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px;
+    }
+    form { display: grid; gap: 13px; }
+    label { display: grid; gap: 6px; color: var(--dim); font-size: 0.9rem; }
+    input, select, button {
+      width: 100%;
+      border-radius: 7px;
+      border: 1px solid var(--border);
+      background: #12131d;
+      color: var(--text);
+      padding: 11px 12px;
+      font: inherit;
+    }
+    input[type="checkbox"] { width: auto; }
+    .row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+    .check {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--text);
+    }
+    button {
+      cursor: pointer;
+      background: var(--accent);
+      color: #111;
+      border-color: var(--accent);
+      font-weight: 800;
+    }
+    button.secondary {
+      background: transparent;
+      color: var(--accent);
+    }
+    button:disabled {
+      opacity: 0.55;
+      cursor: wait;
+    }
+    .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+    .metric {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px;
+      min-height: 72px;
+    }
+    .metric span { color: var(--dim); font-size: 0.82rem; }
+    .metric strong { display: block; margin-top: 6px; font-size: 1.3rem; }
+    .status {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #12131d;
+      padding: 12px;
+      margin-bottom: 14px;
+      color: var(--dim);
+    }
+    .status.ok { border-color: rgba(154, 230, 180, 0.6); color: var(--ok); }
+    .status.err { border-color: rgba(255, 107, 138, 0.7); color: var(--err); }
+    .paths {
+      display: grid;
+      gap: 8px;
+      margin-bottom: 14px;
+      color: var(--dim);
+      word-break: break-all;
+    }
+    .paths strong { color: var(--text); }
+    .file-list {
+      max-height: 44vh;
+      overflow: auto;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #10111a;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.88rem;
+    }
+    th, td {
+      padding: 8px 10px;
+      border-bottom: 1px solid rgba(60, 64, 92, 0.75);
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      position: sticky;
+      top: 0;
+      background: #171824;
+      color: var(--dim);
+      z-index: 1;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 28px;
+      border-radius: 999px;
+      padding: 2px 8px;
+      font-weight: 800;
+      color: #111;
+      background: var(--accent);
+    }
+    .badge.delete { background: var(--err); }
+    .badge.skip { background: var(--warn); }
+    pre {
+      white-space: pre-wrap;
+      word-break: break-word;
+      margin: 14px 0 0;
+      color: var(--dim);
+      background: #10111a;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px;
+      max-height: 180px;
+      overflow: auto;
+    }
+    .hidden { display: none; }
+    @media (max-width: 880px) {
+      main { grid-template-columns: 1fr; }
+      .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .row, .actions { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Delta Packager</h1>
+    <a href="../">Home</a>
+  </header>
+  <main>
+    <section>
+      <form id="form">
+        <label>
+          Repository path
+          <input id="repo" autocomplete="off" placeholder="C:\work\project">
+        </label>
+        <div class="row">
+          <label>
+            VCS
+            <select id="vcs">
+              <option value="auto">Auto detect</option>
+              <option value="git">Git</option>
+              <option value="svn">SVN</option>
+            </select>
+          </label>
+          <label>
+            Output folder
+            <input id="out" autocomplete="off" placeholder="transfer-delta">
+          </label>
+        </div>
+        <div id="git-fields">
+          <div class="row">
+            <label>
+              Git base
+              <input id="base" autocomplete="off" value="last-transfer">
+            </label>
+            <label>
+              Git head
+              <input id="head" autocomplete="off" value="HEAD">
+            </label>
+          </div>
+          <label class="check">
+            <input id="include-working" type="checkbox">
+            Include staged and uncommitted files
+          </label>
+        </div>
+        <div id="svn-fields" class="hidden">
+          <div class="row">
+            <label>
+              SVN from revision
+              <input id="from" autocomplete="off" placeholder="1234">
+            </label>
+            <label>
+              SVN to revision
+              <input id="to" autocomplete="off" value="HEAD">
+            </label>
+          </div>
+        </div>
+        <label>
+          TAR file
+          <input id="tar" autocomplete="off" placeholder="transfer-delta.tar">
+        </label>
+        <label class="check">
+          <input id="make-tar" type="checkbox" checked>
+          Create TAR archive for encoder Load File
+        </label>
+        <div class="actions">
+          <button id="build" type="submit">Build Delta Package</button>
+          <button class="secondary" id="save-defaults" type="button">Save Defaults</button>
+        </div>
+      </form>
+    </section>
+
+    <section>
+      <div id="status" class="status">Ready.</div>
+      <div class="metrics">
+        <div class="metric"><span>Included</span><strong id="included">0</strong></div>
+        <div class="metric"><span>Deleted</span><strong id="deleted">0</strong></div>
+        <div class="metric"><span>Skipped</span><strong id="skipped">0</strong></div>
+        <div class="metric"><span>Total changed</span><strong id="changed">0</strong></div>
+      </div>
+      <div class="paths">
+        <div><strong>Output:</strong> <span id="out-path">-</span></div>
+        <div><strong>Archive:</strong> <span id="tar-path">-</span></div>
+      </div>
+      <div class="file-list">
+        <table>
+          <thead><tr><th>Status</th><th>Path</th></tr></thead>
+          <tbody id="rows"><tr><td colspan="2">No package built yet.</td></tr></tbody>
+        </table>
+      </div>
+      <pre id="log"></pre>
+    </section>
+  </main>
+
+  <script>
+    var form = document.getElementById('form');
+    var repoInput = document.getElementById('repo');
+    var vcsInput = document.getElementById('vcs');
+    var outInput = document.getElementById('out');
+    var baseInput = document.getElementById('base');
+    var headInput = document.getElementById('head');
+    var fromInput = document.getElementById('from');
+    var toInput = document.getElementById('to');
+    var tarInput = document.getElementById('tar');
+    var makeTarInput = document.getElementById('make-tar');
+    var includeWorkingInput = document.getElementById('include-working');
+    var gitFields = document.getElementById('git-fields');
+    var svnFields = document.getElementById('svn-fields');
+    var buildBtn = document.getElementById('build');
+    var statusEl = document.getElementById('status');
+    var logEl = document.getElementById('log');
+    var rowsEl = document.getElementById('rows');
+
+    var saved = loadSaved();
+    fetch('../api/delta/defaults').then(function(res) { return res.json(); }).then(function(defaults) {
+      repoInput.value = saved.repo || defaults.repo || '';
+      outInput.value = saved.out || defaults.out || '';
+      tarInput.value = saved.tar || defaults.tar || '';
+      vcsInput.value = saved.vcs || 'auto';
+      baseInput.value = saved.base || 'last-transfer';
+      headInput.value = saved.head || 'HEAD';
+      fromInput.value = saved.from || '';
+      toInput.value = saved.to || 'HEAD';
+      makeTarInput.checked = saved.makeTar !== false;
+      includeWorkingInput.checked = !!saved.includeWorking;
+      updateVcsFields();
+    }).catch(function(err) {
+      setStatus('Failed to load defaults: ' + err.message, 'err');
+    });
+
+    vcsInput.addEventListener('change', updateVcsFields);
+    document.getElementById('save-defaults').addEventListener('click', function() {
+      saveDefaults();
+      setStatus('Defaults saved in this browser.', 'ok');
+    });
+
+    form.addEventListener('submit', function(event) {
+      event.preventDefault();
+      saveDefaults();
+      buildPackage();
+    });
+
+    function updateVcsFields() {
+      var svn = vcsInput.value === 'svn';
+      gitFields.classList.toggle('hidden', svn);
+      svnFields.classList.toggle('hidden', !svn);
+    }
+
+    function buildPackage() {
+      var body = {
+        repo: repoInput.value.trim(),
+        vcs: vcsInput.value,
+        out: outInput.value.trim(),
+        tar: makeTarInput.checked ? tarInput.value.trim() : false,
+        base: baseInput.value.trim(),
+        head: headInput.value.trim() || 'HEAD',
+        from: fromInput.value.trim(),
+        to: toInput.value.trim() || 'HEAD',
+        includeWorking: includeWorkingInput.checked
+      };
+      buildBtn.disabled = true;
+      setStatus('Building delta package...', '');
+      logEl.textContent = '';
+      fetch('../api/delta/collect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      }).then(function(res) {
+        return res.json().then(function(data) {
+          if (!res.ok || !data.ok) throw data;
+          return data;
+        });
+      }).then(function(data) {
+        renderResult(data);
+        setStatus('Delta package is ready.', 'ok');
+      }).catch(function(err) {
+        setStatus(err.error || err.message || 'Build failed', 'err');
+        logEl.textContent = [err.stdout, err.stderr].filter(Boolean).join('\n') || '';
+      }).finally(function() {
+        buildBtn.disabled = false;
+      });
+    }
+
+    function renderResult(data) {
+      var manifest = data.manifest || {};
+      var counts = manifest.counts || {};
+      document.getElementById('included').textContent = counts.included || 0;
+      document.getElementById('deleted').textContent = counts.deleted || 0;
+      document.getElementById('skipped').textContent = counts.skipped || 0;
+      document.getElementById('changed').textContent = counts.changed || 0;
+      document.getElementById('out-path').textContent = data.out || '-';
+      document.getElementById('tar-path').textContent = data.tar || '-';
+      logEl.textContent = data.stdout || '';
+
+      var rows = [];
+      rows = rows.concat((manifest.included || []).map(function(item) {
+        return rowHtml(item.status || 'M', item.path || '');
+      }));
+      rows = rows.concat((manifest.deleted || []).map(function(item) {
+        return rowHtml('D', item.path || '', 'delete');
+      }));
+      rows = rows.concat((manifest.skipped || []).map(function(item) {
+        return rowHtml(item.status || 'S', (item.path || '') + ' - ' + (item.reason || 'skipped'), 'skip');
+      }));
+      rowsEl.innerHTML = rows.length ? rows.join('') : '<tr><td colspan="2">No changed files found.</td></tr>';
+    }
+
+    function rowHtml(status, filePath, kind) {
+      var cls = kind ? ' ' + kind : '';
+      return '<tr><td><span class="badge' + cls + '">' + escapeHtml(status) + '</span></td><td>' + escapeHtml(filePath) + '</td></tr>';
+    }
+
+    function setStatus(message, kind) {
+      statusEl.textContent = message;
+      statusEl.className = 'status' + (kind ? ' ' + kind : '');
+    }
+
+    function saveDefaults() {
+      localStorage.setItem('delta-packager-defaults', JSON.stringify({
+        repo: repoInput.value,
+        vcs: vcsInput.value,
+        out: outInput.value,
+        base: baseInput.value,
+        head: headInput.value,
+        from: fromInput.value,
+        to: toInput.value,
+        tar: tarInput.value,
+        makeTar: makeTarInput.checked,
+        includeWorking: includeWorkingInput.checked
+      }));
+    }
+
+    function loadSaved() {
+      try { return JSON.parse(localStorage.getItem('delta-packager-defaults') || '{}'); }
+      catch (_) { return {}; }
+    }
+
+    function escapeHtml(value) {
+      return String(value).replace(/[&<>"']/g, function(ch) {
+        return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch];
+      });
+    }
+  </script>
+</body>
+</html>

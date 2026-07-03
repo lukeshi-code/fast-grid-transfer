@@ -20,6 +20,7 @@ test('fast grid pages parse', function() {
   assert.equal(parseInlineScripts('index.html'), 0);
   assert.equal(parseInlineScripts('encoder/index.html'), 1);
   assert.equal(parseInlineScripts('decoder/index.html'), 1);
+  assert.equal(parseInlineScripts('delta/index.html'), 1);
   new Function(read('encoder/fast-grid-encoder-worker.js'));
   new Function(read('decoder/fast-grid-worker.js'));
 });
@@ -29,6 +30,7 @@ test('main pages use fast grid, not the old QR pipeline', function() {
     read('index.html'),
     read('encoder/index.html'),
     read('decoder/index.html'),
+    read('delta/index.html'),
     read('decoder/fast-grid-worker.js')
   ].join('\n');
   assert.match(combined, /Fast Grid/);
