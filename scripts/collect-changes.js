@@ -178,6 +178,7 @@ function uniqueChanges(changes) {
 
 function prepareOutput(repo, outDir, result) {
   const absOut = path.resolve(outDir);
+  assertSafeOutputPath(repo, absOut);
   fs.rmSync(absOut, { recursive: true, force: true });
   fs.mkdirSync(absOut, { recursive: true });
 
@@ -231,6 +232,20 @@ function prepareOutput(repo, outDir, result) {
   fs.writeFileSync(path.join(absOut, 'files.txt'), included.map(x => x.path).join('\n') + (included.length ? '\n' : ''));
   fs.writeFileSync(path.join(absOut, 'deleted.txt'), deleted.map(x => x.path).join('\n') + (deleted.length ? '\n' : ''));
   return { absOut, manifest };
+}
+
+function assertSafeOutputPath(repo, outDir) {
+  const root = path.parse(outDir).root;
+  if (outDir === root) {
+    throw new Error('Refusing to use a drive root as output folder: ' + outDir);
+  }
+  if (path.resolve(repo) === outDir) {
+    throw new Error('Refusing to use the repository root as output folder: ' + outDir);
+  }
+  const name = path.basename(outDir).toLowerCase();
+  if (!name || name === '.' || name === '..') {
+    throw new Error('Unsafe output folder: ' + outDir);
+  }
 }
 
 function createTar(outDir, tarOption) {
