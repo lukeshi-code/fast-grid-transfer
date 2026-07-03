@@ -4,6 +4,7 @@
   "description": "Transfer files through a high-density colored screen grid with browser screen capture decoding.",
   "main": "server.js",
   "scripts": {
+    "collect-changes": "node scripts/collect-changes.js",
     "test": "node --test test/test.js",
     "start": "node server.js"
   },

@@ -37,6 +37,51 @@ Workflow:
 
 Folder transfers are streamed as a `.tar` archive so the encoder does not need to build a ZIP in memory first.
 
+## Delta Code Directory Transfer
+
+For large code directories, generate a small delta package from Git or SVN metadata and transfer only the changed files.
+
+Git example:
+
+```bash
+npm run collect-changes -- --repo C:\work\project --base last-transfer --head HEAD --out transfer-delta --tar
+```
+
+SVN example:
+
+```bash
+npm run collect-changes -- --repo C:\work\project --vcs svn --from 1234 --to HEAD --out transfer-delta --tar
+```
+
+The output directory contains:
+
+```text
+transfer-delta/
+  files/          changed files, preserving repository paths
+  manifest.json  VCS metadata and changed/deleted/skipped entries
+  files.txt      included file list
+  deleted.txt    deleted file list
+transfer-delta.tar
+```
+
+Send `transfer-delta.tar` with the encoder `Load File` button, or send the `transfer-delta` folder with `Load Folder`.
+
+Recommended Git workflow:
+
+1. After a successful full transfer, create or move a baseline tag in the source repository:
+
+   ```bash
+   git tag -f last-transfer HEAD
+   ```
+
+2. On the next transfer, collect only changes since that tag:
+
+   ```bash
+   npm run collect-changes -- --repo C:\work\project --base last-transfer --out transfer-delta --tar
+   ```
+
+3. After the delta has been received and applied, move the baseline tag again.
+
 To create a portable zip for another Windows machine, run:
 
 ```text
