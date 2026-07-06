@@ -206,6 +206,15 @@ function handleDeltaApply(req, res) {
     sendJson(res, 400, { ok: false, error: 'Target root does not exist or is not a directory: ' + targetRoot });
     return;
   }
+  var writable = checkTargetRootWritable(targetRoot);
+  if (!writable.ok) {
+    sendJson(res, 400, {
+      ok: false,
+      error: 'Target root is not writable: ' + targetRoot + '. ' + writable.error,
+      targetRoot: targetRoot
+    });
+    return;
+  }
 
   readRawBody(req, 1024 * 1024 * 1024, function(err, body) {
     if (err) {
@@ -333,6 +342,20 @@ function canKillPid(pid, processName) {
   if (pid === process.pid || pid <= 4) return false;
   var name = String(processName || '').toLowerCase();
   return ['system', 'registry', 'idle', 'svchost.exe', 'explorer.exe'].indexOf(name) === -1;
+}
+
+function checkTargetRootWritable(targetRoot) {
+  var probe = path.join(targetRoot, '.fast-grid-write-test-' + Date.now() + '.tmp');
+  try {
+    fs.writeFileSync(probe, 'test');
+    fs.unlinkSync(probe);
+    return { ok: true };
+  } catch (error) {
+    try {
+      if (fs.existsSync(probe)) fs.unlinkSync(probe);
+    } catch (_) {}
+    return { ok: false, error: error.message };
+  }
 }
 
 function prepareTargetForApply(targetRoot) {
