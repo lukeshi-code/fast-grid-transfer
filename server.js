@@ -213,6 +213,7 @@ function handleDeltaApply(req, res) {
       return;
     }
     try {
+      prepareTargetForApply(targetRoot);
       var result = applyDeltaTar(body, targetRoot, applyDeletes);
       sendJson(res, 200, { ok: true, targetRoot: targetRoot, result: result });
     } catch (error) {
@@ -297,9 +298,16 @@ function findFileLocks(targetRoot) {
     cwd: DIR,
     encoding: 'utf8',
     windowsHide: true,
-    maxBuffer: 20 * 1024 * 1024
+    maxBuffer: 20 * 1024 * 1024,
+    timeout: 8000
   });
   var output = (result.stdout || '') + '\n' + (result.stderr || '');
+  if (result.error && result.error.code === 'ETIMEDOUT') {
+    throw new Error('Handle scan timed out. Close IDE/build tools or apply directly after cleanup.');
+  }
+  if (result.signal === 'SIGTERM') {
+    throw new Error('Handle scan timed out. Close IDE/build tools or apply directly after cleanup.');
+  }
   if (result.error) throw result.error;
   return parseHandleOutput(output).filter(function(lock) {
     return lock.path && lock.path.toLowerCase().indexOf(targetRoot.toLowerCase()) === 0;
@@ -325,6 +333,50 @@ function canKillPid(pid, processName) {
   if (pid === process.pid || pid <= 4) return false;
   var name = String(processName || '').toLowerCase();
   return ['system', 'registry', 'idle', 'svchost.exe', 'explorer.exe'].indexOf(name) === -1;
+}
+
+function prepareTargetForApply(targetRoot) {
+  runSvnCleanupIfAvailable(targetRoot);
+  clearReadonlyAttributes(targetRoot);
+}
+
+function runSvnCleanupIfAvailable(targetRoot) {
+  if (!fs.existsSync(path.join(targetRoot, '.svn'))) return;
+  var svn = findSvnExe();
+  if (!svn) return;
+  childProcess.spawnSync(svn, ['cleanup', targetRoot], {
+    cwd: targetRoot,
+    encoding: 'utf8',
+    windowsHide: true,
+    timeout: 30000
+  });
+}
+
+function clearReadonlyAttributes(targetRoot) {
+  if (process.platform !== 'win32') return;
+  childProcess.spawnSync('attrib', ['-R', path.join(targetRoot, '*'), '/S'], {
+    cwd: targetRoot,
+    encoding: 'utf8',
+    windowsHide: true,
+    timeout: 30000
+  });
+}
+
+function findSvnExe() {
+  var candidates = [
+    'C:\\Program Files\\TortoiseSVN\\bin\\svn.exe',
+    'C:\\Program Files (x86)\\TortoiseSVN\\bin\\svn.exe',
+    'C:\\Program Files\\SlikSvn\\bin\\svn.exe',
+    'C:\\Program Files (x86)\\SlikSvn\\bin\\svn.exe'
+  ];
+  for (var i = 0; i < candidates.length; i++) {
+    if (fs.existsSync(candidates[i])) return candidates[i];
+  }
+  var where = childProcess.spawnSync('where', ['svn.exe'], { encoding: 'utf8', windowsHide: true });
+  if (where.status === 0) {
+    return where.stdout.split(/\r?\n/).map(function(line) { return line.trim(); }).find(Boolean) || null;
+  }
+  return null;
 }
 
 function applyDeltaTar(buffer, targetRoot, applyDeletes) {

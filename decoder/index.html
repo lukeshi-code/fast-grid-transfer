@@ -1130,9 +1130,10 @@
         return;
       }
       closeLocksBtn.disabled = true;
+      checkLocksBtn.disabled = true;
       setApplyResult('Checking file locks...', '');
       try {
-        var response = await fetch('/api/locks/check?targetRoot=' + encodeURIComponent(targetRoot));
+        var response = await fetchWithTimeout('/api/locks/check?targetRoot=' + encodeURIComponent(targetRoot), {}, 12000);
         var data = await readJsonResponse(response);
         if (!response.ok || !data.ok) throw new Error(data.error || 'Lock check failed');
         lastLocks = data.locks || [];
@@ -1150,6 +1151,8 @@
       } catch (err) {
         lastLocks = [];
         setApplyResult(err.message || String(err), 'err');
+      } finally {
+        checkLocksBtn.disabled = false;
       }
     }
 
@@ -1204,6 +1207,21 @@
         return text ? JSON.parse(text) : {};
       } catch (err) {
         throw new Error('Backend returned non-JSON: ' + text.slice(0, 140));
+      }
+    }
+
+    async function fetchWithTimeout(url, options, timeoutMs) {
+      var controller = new AbortController();
+      var timer = setTimeout(function() { controller.abort(); }, timeoutMs);
+      try {
+        var nextOptions = options || {};
+        nextOptions.signal = controller.signal;
+        return await fetch(url, nextOptions);
+      } catch (err) {
+        if (err.name === 'AbortError') throw new Error('File lock check timed out. Close IDE/build tools, or try Apply Files directly.');
+        throw err;
+      } finally {
+        clearTimeout(timer);
       }
     }
 
