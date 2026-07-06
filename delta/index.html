@@ -308,7 +308,7 @@
       includeWorkingInput.checked = !!saved.includeWorking;
       updateVcsFields();
     }).catch(function(err) {
-      setStatus('Backend is not ready. Run start-delta-packager.bat, then reopen this page. ' + (err.error || err.message || ''), 'err');
+      setStatus('Backend is not ready. Close the old server window, run run-fast-grid.bat from this project, then reopen this page. ' + (err.error || err.message || ''), 'err');
     });
 
     vcsInput.addEventListener('change', updateVcsFields);
@@ -404,7 +404,7 @@
             data = text ? JSON.parse(text) : {};
           } catch (err) {
             throw {
-              error: 'Backend API is missing. Run start-delta-packager.bat from the project folder, then use the page it opens. Server said: ' + text.slice(0, 120)
+              error: 'Backend API is missing. You are probably connected to an old server. Close it, run run-fast-grid.bat from this project, then use the page it opens. Server said: ' + text.slice(0, 120)
             };
           }
           if (!res.ok) throw data;

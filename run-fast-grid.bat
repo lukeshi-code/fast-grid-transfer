@@ -12,6 +12,9 @@ if errorlevel 1 (
 
 if "%PORT%"=="" set PORT=3001
 
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "$port=%PORT%; $conns=Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue; foreach($conn in $conns){ $proc=Get-CimInstance Win32_Process -Filter \"ProcessId=$($conn.OwningProcess)\"; if($proc.CommandLine -match 'node(\\.exe)?\\s+server\\.js'){ Write-Host \"Stopping old Fast Grid server on port $port\"; Stop-Process -Id $conn.OwningProcess -Force } }"
+
 echo Starting Fast Grid Transfer on http://localhost:%PORT%/
 echo.
 echo Encoder: http://localhost:%PORT%/encoder/

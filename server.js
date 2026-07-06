@@ -60,6 +60,24 @@ function readJsonBody(req, done) {
   req.on('error', done);
 }
 
+function readRawBody(req, maxBytes, done) {
+  var chunks = [];
+  var size = 0;
+  req.on('data', function(chunk) {
+    size += chunk.length;
+    if (size > maxBytes) {
+      req.destroy();
+      done(new Error('Request body too large'));
+      return;
+    }
+    chunks.push(chunk);
+  });
+  req.on('end', function() {
+    done(null, Buffer.concat(chunks));
+  });
+  req.on('error', done);
+}
+
 function handleDeltaDefaults(req, res) {
   sendJson(res, 200, {
     repo: DIR,
@@ -159,6 +177,157 @@ function handleDeltaArchive(req, res, token) {
   fs.createReadStream(archive.path).pipe(res);
 }
 
+function handleDeltaApply(req, res) {
+  var parsed = new URL(req.url, 'http://localhost');
+  var targetRoot = String(parsed.searchParams.get('targetRoot') || '').trim();
+  var applyDeletes = parsed.searchParams.get('applyDeletes') === '1';
+  if (!targetRoot) {
+    sendJson(res, 400, { ok: false, error: 'Target root is required.' });
+    return;
+  }
+  targetRoot = path.resolve(targetRoot);
+  if (!fs.existsSync(targetRoot) || !fs.statSync(targetRoot).isDirectory()) {
+    sendJson(res, 400, { ok: false, error: 'Target root does not exist or is not a directory: ' + targetRoot });
+    return;
+  }
+
+  readRawBody(req, 1024 * 1024 * 1024, function(err, body) {
+    if (err) {
+      sendJson(res, 400, { ok: false, error: err.message });
+      return;
+    }
+    try {
+      var result = applyDeltaTar(body, targetRoot, applyDeletes);
+      sendJson(res, 200, { ok: true, targetRoot: targetRoot, result: result });
+    } catch (error) {
+      sendJson(res, 400, { ok: false, error: error.message });
+    }
+  });
+}
+
+function applyDeltaTar(buffer, targetRoot, applyDeletes) {
+  var entries = parseTar(buffer);
+  var copied = [];
+  var deleted = [];
+  var skipped = [];
+  var failed = [];
+  var deletedTxt = null;
+
+  entries.forEach(function(entry) {
+    var normalized = normalizeTarPath(entry.name);
+    if (!normalized) return;
+    if (normalized === 'deleted.txt') {
+      deletedTxt = entry.data.toString('utf8');
+      return;
+    }
+    if (entry.type !== 'file') return;
+    if (normalized.indexOf('files/') !== 0) return;
+
+    var rel = normalized.slice('files/'.length);
+    if (!rel) return;
+    try {
+      var dest = safeTargetPath(targetRoot, rel);
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      fs.writeFileSync(dest, entry.data);
+      copied.push(rel);
+    } catch (error) {
+      failed.push({ path: rel, error: error.message });
+    }
+  });
+
+  if (applyDeletes && deletedTxt) {
+    deletedTxt.split(/\r?\n/).map(function(line) { return line.trim(); }).filter(Boolean).forEach(function(rel) {
+      try {
+        var target = safeTargetPath(targetRoot, rel);
+        if (fs.existsSync(target) && fs.statSync(target).isFile()) {
+          fs.unlinkSync(target);
+          deleted.push(rel);
+        } else {
+          skipped.push({ path: rel, reason: 'not found' });
+        }
+      } catch (error) {
+        failed.push({ path: rel, error: error.message });
+      }
+    });
+  }
+
+  return {
+    copied: copied,
+    deleted: deleted,
+    skipped: skipped,
+    failed: failed,
+    counts: {
+      copied: copied.length,
+      deleted: deleted.length,
+      skipped: skipped.length,
+      failed: failed.length
+    }
+  };
+}
+
+function parseTar(buffer) {
+  var entries = [];
+  var offset = 0;
+  var longName = null;
+  while (offset + 512 <= buffer.length) {
+    var header = buffer.slice(offset, offset + 512);
+    if (isZeroBlock(header)) break;
+    var name = readTarString(header, 0, 100);
+    var size = parseInt(readTarString(header, 124, 12).trim() || '0', 8) || 0;
+    var typeFlag = readTarString(header, 156, 1) || '0';
+    var prefix = readTarString(header, 345, 155);
+    if (prefix) name = prefix + '/' + name;
+    offset += 512;
+    var data = buffer.slice(offset, offset + size);
+    var padded = Math.ceil(size / 512) * 512;
+    offset += padded;
+
+    if (typeFlag === 'L') {
+      longName = data.toString('utf8').replace(/\0.*$/, '');
+      continue;
+    }
+    if (longName) {
+      name = longName;
+      longName = null;
+    }
+    entries.push({
+      name: name,
+      type: typeFlag === '0' || typeFlag === '\0' || typeFlag === '' ? 'file' : (typeFlag === '5' ? 'dir' : 'other'),
+      data: data
+    });
+  }
+  return entries;
+}
+
+function readTarString(buffer, start, length) {
+  return buffer.slice(start, start + length).toString('utf8').replace(/\0.*$/, '').trim();
+}
+
+function isZeroBlock(buffer) {
+  for (var i = 0; i < buffer.length; i++) {
+    if (buffer[i] !== 0) return false;
+  }
+  return true;
+}
+
+function normalizeTarPath(value) {
+  var normalized = String(value || '').replace(/\\/g, '/').replace(/^\.\/+/, '').replace(/^\/+/, '');
+  if (!normalized || normalized.indexOf('\0') !== -1) return '';
+  if (normalized.split('/').indexOf('..') !== -1) throw new Error('Unsafe tar path: ' + value);
+  return normalized;
+}
+
+function safeTargetPath(root, rel) {
+  var normalized = normalizeTarPath(rel);
+  if (!normalized) throw new Error('Empty target path');
+  var target = path.resolve(root, normalized);
+  var relative = path.relative(root, target);
+  if (relative.startsWith('..') || path.isAbsolute(relative)) {
+    throw new Error('Path escapes target root: ' + rel);
+  }
+  return target;
+}
+
 function handler(req, res) {
   var urlPath = req.url.split('?')[0];
   if (req.method === 'GET' && urlPath === '/api/delta/defaults') {
@@ -171,6 +340,10 @@ function handler(req, res) {
   }
   if (req.method === 'GET' && urlPath.indexOf('/api/delta/archive/') === 0) {
     handleDeltaArchive(req, res, decodeURIComponent(urlPath.slice('/api/delta/archive/'.length)));
+    return;
+  }
+  if (req.method === 'POST' && urlPath === '/api/delta/apply') {
+    handleDeltaApply(req, res);
     return;
   }
   var filePath = resolveSafePath(DIR, urlPath);

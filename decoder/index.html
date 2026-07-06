@@ -66,6 +66,25 @@
     }
     button.danger { background: var(--err); }
     button:disabled { opacity: 0.45; cursor: default; }
+    input {
+      width: 100%;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: #10111a;
+      color: var(--text);
+      padding: 9px 10px;
+      margin-top: 6px;
+      font: inherit;
+    }
+    label { color: var(--dim); font-size: 0.82rem; }
+    label.check {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 8px;
+      color: var(--text);
+    }
+    label.check input { width: auto; margin: 0; }
     .metric {
       border: 1px solid var(--border);
       border-radius: 6px;
@@ -219,6 +238,30 @@
       border-radius: 8px;
     }
     .hint { color: var(--warn); font-size: 0.82rem; }
+    .apply-panel {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px;
+      margin-top: 12px;
+      background: rgba(255,255,255,0.04);
+    }
+    .apply-panel h2 {
+      margin: 0 0 8px;
+      font-size: 0.95rem;
+    }
+    .apply-panel p {
+      margin: 6px 0;
+      font-size: 0.82rem;
+    }
+    .apply-result {
+      margin-top: 8px;
+      color: var(--dim);
+      font-size: 0.78rem;
+      max-height: 120px;
+      overflow: auto;
+      overflow-wrap: anywhere;
+      white-space: pre-wrap;
+    }
     @media (max-width: 900px) {
       body { grid-template-columns: 1fr; }
       aside { border-right: 0; border-bottom: 1px solid var(--border); }
@@ -233,6 +276,20 @@
     <button id="start">Start Screen Capture</button>
     <button id="stop" class="danger" disabled>Stop</button>
     <button id="download" class="secondary" disabled>Download File</button>
+    <div class="apply-panel" id="apply-panel">
+      <h2>Apply Delta Package</h2>
+      <p>After a delta TAR is decoded, choose the target code root and apply changed files.</p>
+      <label>
+        Target root
+        <input id="apply-target" placeholder="D:\code1">
+      </label>
+      <label class="check">
+        <input id="apply-deletes" type="checkbox">
+        Apply deletions from deleted.txt
+      </label>
+      <button id="apply-delta" class="secondary" disabled>Apply Files</button>
+      <div id="apply-result" class="apply-result">Waiting for a decoded delta TAR.</div>
+    </div>
 
     <div class="summary">
       <div class="summary-head">
@@ -273,6 +330,10 @@
     var startBtn = document.getElementById('start');
     var stopBtn = document.getElementById('stop');
     var downloadBtn = document.getElementById('download');
+    var applyTarget = document.getElementById('apply-target');
+    var applyDeletes = document.getElementById('apply-deletes');
+    var applyDeltaBtn = document.getElementById('apply-delta');
+    var applyResult = document.getElementById('apply-result');
     var statusEl = document.getElementById('status');
     var detailEl = document.getElementById('detail');
     var transferPercent = document.getElementById('transfer-percent');
@@ -357,6 +418,7 @@
       a.click();
       setTimeout(function() { URL.revokeObjectURL(a.href); }, 5000);
     });
+    applyDeltaBtn.addEventListener('click', applyDeltaPackage);
 
     worker.onmessage = function(event) {
       busy = false;
@@ -516,6 +578,8 @@
       progressText.textContent = 'Packet Map';
       rateEl.textContent = 'Green = received, red = failed, yellow = recovered by RaptorQ';
       downloadBtn.disabled = true;
+      applyDeltaBtn.disabled = true;
+      applyResult.textContent = 'Waiting for a decoded delta TAR.';
       statusEl.textContent = 'Idle';
       detailEl.textContent = 'Waiting for screen capture.';
       renderDiagnostics();
@@ -996,10 +1060,54 @@
       decodedName = file.name;
       decodedBlob = new Blob([file.bytes], { type: 'application/octet-stream' });
       downloadBtn.disabled = false;
+      if (/\.tar$/i.test(decodedName)) {
+        applyDeltaBtn.disabled = false;
+        applyResult.textContent = 'Delta TAR ready. Enter the target code root, then apply files.';
+      } else {
+        applyDeltaBtn.disabled = true;
+        applyResult.textContent = 'Decoded file is not a TAR delta package.';
+      }
       detailEl.textContent = decodedName + ' ready, ' + formatSize(file.bytes.length) + (file.sha256 ? ', SHA-256 ok' : '');
       renderSummary();
       renderDiagnostics();
       downloadBtn.click();
+    }
+
+    async function applyDeltaPackage() {
+      if (!decodedBlob) return;
+      var targetRoot = applyTarget.value.trim();
+      if (!targetRoot) {
+        applyResult.textContent = 'Target root is required.';
+        return;
+      }
+      applyDeltaBtn.disabled = true;
+      applyResult.textContent = 'Applying files...';
+      try {
+        var url = '/api/delta/apply?targetRoot=' + encodeURIComponent(targetRoot) + '&applyDeletes=' + (applyDeletes.checked ? '1' : '0');
+        var response = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-tar' },
+          body: decodedBlob
+        });
+        var data = await response.json();
+        if (!response.ok || !data.ok) throw new Error(data.error || 'Apply failed');
+        var result = data.result || {};
+        var counts = result.counts || {};
+        var lines = [
+          'Applied to: ' + data.targetRoot,
+          'Copied: ' + (counts.copied || 0),
+          'Deleted: ' + (counts.deleted || 0),
+          'Skipped: ' + (counts.skipped || 0),
+          'Failed: ' + (counts.failed || 0)
+        ];
+        if (result.copied && result.copied.length) lines.push('', 'Copied files:', result.copied.slice(0, 80).join('\n'));
+        if (result.failed && result.failed.length) lines.push('', 'Failed:', result.failed.map(function(item) { return item.path + ': ' + item.error; }).join('\n'));
+        applyResult.textContent = lines.join('\n');
+      } catch (err) {
+        applyResult.textContent = err.message || String(err);
+      } finally {
+        applyDeltaBtn.disabled = false;
+      }
     }
 
     async function parseStream(buf) {
