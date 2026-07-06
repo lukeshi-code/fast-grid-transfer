@@ -86,6 +86,18 @@ function handleDeltaDefaults(req, res) {
   });
 }
 
+function handleHealth(req, res) {
+  sendJson(res, 200, {
+    ok: true,
+    app: 'fast-grid-transfer',
+    features: {
+      deltaCollect: true,
+      deltaArchive: true,
+      deltaApply: true
+    }
+  });
+}
+
 function handleDeltaCollect(req, res) {
   readJsonBody(req, function(err, body) {
     if (err) {
@@ -330,6 +342,10 @@ function safeTargetPath(root, rel) {
 
 function handler(req, res) {
   var urlPath = req.url.split('?')[0];
+  if (req.method === 'GET' && urlPath === '/api/health') {
+    handleHealth(req, res);
+    return;
+  }
   if (req.method === 'GET' && urlPath === '/api/delta/defaults') {
     handleDeltaDefaults(req, res);
     return;
@@ -497,6 +513,7 @@ function startHTTP() {
     console.log('Fast Grid Encoder: http://localhost:' + PORT + '/encoder/');
     console.log('Fast Grid Decoder: http://localhost:' + PORT + '/decoder/');
     console.log('Delta Packager:    http://localhost:' + PORT + '/delta/');
+    console.log('Delta Apply API:   enabled');
   });
 }
 

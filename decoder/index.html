@@ -262,6 +262,8 @@
       overflow-wrap: anywhere;
       white-space: pre-wrap;
     }
+    .apply-result.ok { color: var(--ok); }
+    .apply-result.err { color: var(--err); }
     @media (max-width: 900px) {
       body { grid-template-columns: 1fr; }
       aside { border-right: 0; border-bottom: 1px solid var(--border); }
@@ -419,6 +421,7 @@
       setTimeout(function() { URL.revokeObjectURL(a.href); }, 5000);
     });
     applyDeltaBtn.addEventListener('click', applyDeltaPackage);
+    checkBackendHealth();
 
     worker.onmessage = function(event) {
       busy = false;
@@ -1089,7 +1092,7 @@
           headers: { 'Content-Type': 'application/x-tar' },
           body: decodedBlob
         });
-        var data = await response.json();
+        var data = await readJsonResponse(response);
         if (!response.ok || !data.ok) throw new Error(data.error || 'Apply failed');
         var result = data.result || {};
         var counts = result.counts || {};
@@ -1100,14 +1103,50 @@
           'Skipped: ' + (counts.skipped || 0),
           'Failed: ' + (counts.failed || 0)
         ];
-        if (result.copied && result.copied.length) lines.push('', 'Copied files:', result.copied.slice(0, 80).join('\n'));
-        if (result.failed && result.failed.length) lines.push('', 'Failed:', result.failed.map(function(item) { return item.path + ': ' + item.error; }).join('\n'));
-        applyResult.textContent = lines.join('\n');
+        appendApplyList(lines, 'Copied files', result.copied);
+        appendApplyList(lines, 'Deleted files', result.deleted);
+        appendApplyList(lines, 'Skipped files', result.skipped);
+        appendApplyList(lines, 'Failed files', result.failed);
+        setApplyResult(lines.join('\n'), counts.failed ? 'err' : 'ok');
       } catch (err) {
-        applyResult.textContent = err.message || String(err);
+        setApplyResult(err.message || String(err), 'err');
       } finally {
         applyDeltaBtn.disabled = false;
       }
+    }
+
+    async function checkBackendHealth() {
+      try {
+        var response = await fetch('/api/health');
+        var data = await readJsonResponse(response);
+        if (!response.ok || !data.features || !data.features.deltaApply) throw new Error('Delta apply API is not available.');
+      } catch (err) {
+        setApplyResult('Backend is old or not running from this project. Close the server window, run run-fast-grid.bat again, then reload this page.', 'err');
+      }
+    }
+
+    async function readJsonResponse(response) {
+      var text = await response.text();
+      try {
+        return text ? JSON.parse(text) : {};
+      } catch (err) {
+        throw new Error('Backend returned non-JSON: ' + text.slice(0, 140));
+      }
+    }
+
+    function appendApplyList(lines, title, values) {
+      if (!values || !values.length) return;
+      lines.push('', title + ':');
+      values.slice(0, 120).forEach(function(item) {
+        if (typeof item === 'string') lines.push('  ' + item);
+        else lines.push('  ' + item.path + (item.reason ? ' - ' + item.reason : '') + (item.error ? ' - ' + item.error : ''));
+      });
+      if (values.length > 120) lines.push('  ... +' + (values.length - 120) + ' more');
+    }
+
+    function setApplyResult(message, kind) {
+      applyResult.textContent = message;
+      applyResult.className = 'apply-result' + (kind ? ' ' + kind : '');
     }
 
     async function parseStream(buf) {
