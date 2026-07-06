@@ -5,6 +5,17 @@ const fs = require('fs');
 const path = require('path');
 const cp = require('child_process');
 
+const commandCache = {};
+const windowsCommandCandidates = {
+  svn: [
+    'C:\\Program Files\\TortoiseSVN\\bin\\svn.exe',
+    'C:\\Program Files (x86)\\TortoiseSVN\\bin\\svn.exe',
+    'C:\\Program Files\\SlikSvn\\bin\\svn.exe',
+    'C:\\Program Files (x86)\\SlikSvn\\bin\\svn.exe',
+    'C:\\Program Files\\CollabNet\\Subversion Client\\svn.exe',
+  ],
+};
+
 function usage() {
   console.log([
     'Usage:',
@@ -65,8 +76,9 @@ function parseArgs(argv) {
 }
 
 function run(cmd, args, cwd) {
-  const result = cp.spawnSync(cmd, args, { cwd, encoding: 'utf8', windowsHide: true });
-  if (result.error) throw result.error;
+  const resolved = resolveCommand(cmd);
+  const result = cp.spawnSync(resolved, args, { cwd, encoding: 'utf8', windowsHide: true });
+  if (result.error) throw commandError(cmd, result.error);
   if (result.status !== 0) {
     throw new Error(cmd + ' ' + args.join(' ') + '\n' + (result.stderr || result.stdout));
   }
@@ -74,12 +86,45 @@ function run(cmd, args, cwd) {
 }
 
 function runNull(cmd, args, cwd) {
-  const result = cp.spawnSync(cmd, args, { cwd, encoding: 'buffer', windowsHide: true });
-  if (result.error) throw result.error;
+  const resolved = resolveCommand(cmd);
+  const result = cp.spawnSync(resolved, args, { cwd, encoding: 'buffer', windowsHide: true });
+  if (result.error) throw commandError(cmd, result.error);
   if (result.status !== 0) {
     throw new Error(cmd + ' ' + args.join(' ') + '\n' + Buffer.from(result.stderr || result.stdout).toString('utf8'));
   }
   return Buffer.from(result.stdout);
+}
+
+function resolveCommand(cmd) {
+  if (commandCache[cmd]) return commandCache[cmd];
+  if (process.platform === 'win32') {
+    const where = cp.spawnSync('where', [cmd], { encoding: 'utf8', windowsHide: true });
+    const first = where.status === 0 ? where.stdout.split(/\r?\n/).map(x => x.trim()).find(Boolean) : '';
+    if (first) {
+      commandCache[cmd] = first;
+      return first;
+    }
+    const candidates = windowsCommandCandidates[cmd] || [];
+    const found = candidates.find(candidate => fs.existsSync(candidate));
+    if (found) {
+      commandCache[cmd] = found;
+      return found;
+    }
+  }
+  commandCache[cmd] = cmd;
+  return cmd;
+}
+
+function commandError(cmd, err) {
+  if (err && err.code === 'ENOENT') {
+    if (cmd === 'svn') {
+      return new Error('SVN command line tool was not found. Install TortoiseSVN with command line tools, SlikSVN, or add svn.exe to PATH.');
+    }
+    if (cmd === 'git') {
+      return new Error('Git command line tool was not found. Install Git for Windows or add git.exe to PATH.');
+    }
+  }
+  return err;
 }
 
 function detectVcs(repo) {

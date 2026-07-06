@@ -65,28 +65,28 @@
 <body>
   <main>
     <h1>Fast Grid Transfer</h1>
-    <p>Transfer files through a high-density colored screen grid. The encoder displays binary frames; the decoder captures the screen and decodes frames in a Web Worker.</p>
+    <p>Start here for every workflow. Use Encoder and Decoder for normal file transfer, or Delta Packager for code directories; the delta workflow opens Encoder automatically after it builds the archive.</p>
     <div class="actions">
-      <a class="button" href="encoder/">Open Encoder</a>
-      <a class="button secondary" href="decoder/">Open Decoder</a>
-      <a class="button secondary" href="delta/">Delta Packager</a>
+      <a class="button" href="delta/">Code Delta Transfer</a>
+      <a class="button secondary" href="encoder/">Manual Encoder</a>
+      <a class="button secondary" href="decoder/">Decoder</a>
     </div>
     <div class="cards">
       <section class="card">
-        <h2>Colored Grid Encoding</h2>
-        <p>Each frame stores 1024 raw bytes using 2-bit color cells, with binary headers and per-frame checksums.</p>
+        <h2>One Startup File</h2>
+        <p>Run `run-fast-grid.bat` once and keep that window open. All pages and local APIs come from that server.</p>
       </section>
       <section class="card">
-        <h2>Screen Capture Decoder</h2>
-        <p>The decoder reads the encoder tab or window directly from browser screen capture.</p>
+        <h2>Code Delta Transfer</h2>
+        <p>Pick a Git or SVN working copy, review changed files, build a TAR archive, then auto-load it in Encoder.</p>
       </section>
       <section class="card">
-        <h2>Worker-Based Decode</h2>
-        <p>Frame detection and sampling happen off the main thread to keep the UI responsive.</p>
+        <h2>Manual File Transfer</h2>
+        <p>Open Encoder manually for a file or folder, then capture that tab from Decoder on the receiving side.</p>
       </section>
       <section class="card">
-        <h2>Delta Code Packages</h2>
-        <p>Build Git or SVN delta archives from a baseline so only changed code files need to be transferred.</p>
+        <h2>Verified Output</h2>
+        <p>The receiver rebuilds the stream and verifies SHA-256 before downloading the final file.</p>
       </section>
     </div>
   </main>

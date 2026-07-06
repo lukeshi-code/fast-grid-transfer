@@ -6,13 +6,13 @@ The encoder renders binary frames as two parallel 100 x 100 visual grids with 64
 
 ## Use
 
-On Windows, double-click:
+On Windows, double-click the only startup file:
 
 ```text
 run-fast-grid.bat
 ```
 
-It starts the local server and opens the home page.
+It starts the local server and opens the home page. From there choose `Encoder`, `Decoder`, or `Delta Packager`.
 
 Manual start:
 
@@ -49,13 +49,7 @@ http://localhost:3000/delta/
 
 Fill in the repository path, Git base or SVN revision range, then click `Build Delta Package`.
 
-On Windows, the easiest way is to double-click:
-
-```text
-start-delta-packager.bat
-```
-
-It starts the correct local server and opens the packager page directly.
+For code directory transfer, open `Delta Packager`, build the delta package, review the changed file list, and let it open the encoder automatically.
 
 Git example:
 

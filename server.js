@@ -102,9 +102,10 @@ function handleDeltaCollect(req, res) {
       });
       if (result.error) throw result.error;
       if (result.status !== 0) {
+        var errorText = (result.stderr || result.stdout || 'Delta package generation failed').trim();
         sendJson(res, 500, {
           ok: false,
-          error: result.stderr || result.stdout || 'Delta package generation failed',
+          error: errorText.split(/\r?\n/).find(Boolean) || 'Delta package generation failed',
           stdout: result.stdout || '',
           stderr: result.stderr || ''
         });
