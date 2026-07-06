@@ -16,6 +16,7 @@ echo Starting Fast Grid Transfer on http://localhost:%PORT%/
 echo.
 echo Encoder: http://localhost:%PORT%/encoder/
 echo Decoder: http://localhost:%PORT%/decoder/
+echo Delta Packager: http://localhost:%PORT%/delta/
 echo.
 echo Keep this window open while using the tool.
 echo.

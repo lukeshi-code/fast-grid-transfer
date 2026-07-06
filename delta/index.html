@@ -302,10 +302,12 @@
       includeWorkingInput.checked = !!saved.includeWorking;
       updateVcsFields();
     }).catch(function(err) {
-      setStatus('Failed to load defaults: ' + err.message, 'err');
+      setStatus('Backend is not ready. Run start-delta-packager.bat, then reopen this page. ' + (err.error || err.message || ''), 'err');
     });
 
     vcsInput.addEventListener('change', updateVcsFields);
+    repoInput.addEventListener('change', suggestOutputFromRepo);
+    repoInput.addEventListener('blur', suggestOutputFromRepo);
     document.getElementById('save-defaults').addEventListener('click', function() {
       saveDefaults();
       setStatus('Defaults saved in this browser.', 'ok');
@@ -323,6 +325,24 @@
       svnFields.classList.toggle('hidden', !svn);
     }
 
+    function suggestOutputFromRepo() {
+      var repo = repoInput.value.trim();
+      if (!repo) return;
+      var clean = repo.replace(/[\\\/]+$/, '');
+      var slash = Math.max(clean.lastIndexOf('\\'), clean.lastIndexOf('/'));
+      var parent = slash >= 0 ? clean.slice(0, slash) : '';
+      var name = slash >= 0 ? clean.slice(slash + 1) : clean;
+      if (!name) return;
+      var out = (parent ? parent + '\\' : '') + name + '-delta';
+      var tar = out + '.tar';
+      if (!outInput.value.trim() || isDriveRoot(outInput.value.trim())) outInput.value = out;
+      if (!tarInput.value.trim() || tarInput.value.trim() === 'transfer-delta.tar') tarInput.value = tar;
+    }
+
+    function isDriveRoot(value) {
+      return /^[a-zA-Z]:[\\\/]?$/.test(value.trim());
+    }
+
     function buildPackage() {
       var body = {
         repo: repoInput.value.trim(),
@@ -335,6 +355,10 @@
         to: toInput.value.trim() || 'HEAD',
         includeWorking: includeWorkingInput.checked
       };
+      if (isDriveRoot(body.out)) {
+        setStatus('Output folder cannot be a drive root. Use a folder such as ' + body.out.replace(/[\\\/]?$/, '\\') + 'transfer-delta', 'err');
+        return;
+      }
       buildBtn.disabled = true;
       setStatus('Building delta package...', '');
       logEl.textContent = '';
@@ -362,7 +386,7 @@
             data = text ? JSON.parse(text) : {};
           } catch (err) {
             throw {
-              error: 'Server returned non-JSON: ' + text.slice(0, 160) + '. Restart run-fast-grid.bat to use the latest server.'
+              error: 'Backend API is missing. Run start-delta-packager.bat from the project folder, then use the page it opens. Server said: ' + text.slice(0, 120)
             };
           }
           if (!res.ok) throw data;

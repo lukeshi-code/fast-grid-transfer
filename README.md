@@ -49,6 +49,14 @@ http://localhost:3000/delta/
 
 Fill in the repository path, Git base or SVN revision range, then click `Build Delta Package`.
 
+On Windows, the easiest way is to double-click:
+
+```text
+start-delta-packager.bat
+```
+
+It starts the correct local server and opens the packager page directly.
+
 Git example:
 
 ```bash
