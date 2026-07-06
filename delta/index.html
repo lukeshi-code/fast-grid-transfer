@@ -240,6 +240,10 @@
           <input id="make-tar" type="checkbox" checked>
           Create TAR archive for encoder Load File
         </label>
+        <label class="check">
+          <input id="auto-encoder" type="checkbox" checked>
+          Open encoder automatically after build
+        </label>
         <div class="actions">
           <button id="build" type="submit">Build Delta Package</button>
           <button class="secondary" id="save-defaults" type="button">Save Defaults</button>
@@ -280,6 +284,7 @@
     var toInput = document.getElementById('to');
     var tarInput = document.getElementById('tar');
     var makeTarInput = document.getElementById('make-tar');
+    var autoEncoderInput = document.getElementById('auto-encoder');
     var includeWorkingInput = document.getElementById('include-working');
     var gitFields = document.getElementById('git-fields');
     var svnFields = document.getElementById('svn-fields');
@@ -299,6 +304,7 @@
       fromInput.value = saved.from || '';
       toInput.value = saved.to || 'HEAD';
       makeTarInput.checked = saved.makeTar !== false;
+      autoEncoderInput.checked = saved.autoEncoder !== false;
       includeWorkingInput.checked = !!saved.includeWorking;
       updateVcsFields();
     }).catch(function(err) {
@@ -359,6 +365,7 @@
         setStatus('Output folder cannot be a drive root. Use a folder such as ' + body.out.replace(/[\\\/]?$/, '\\') + 'transfer-delta', 'err');
         return;
       }
+      var encoderWindow = autoEncoderInput.checked ? window.open('about:blank', 'fast-grid-encoder') : null;
       buildBtn.disabled = true;
       setStatus('Building delta package...', '');
       logEl.textContent = '';
@@ -369,8 +376,19 @@
       }).then(function(data) {
         if (!data.ok) throw data;
         renderResult(data);
-        setStatus('Delta package is ready.', 'ok');
+        if (autoEncoderInput.checked && data.encoderUrl) {
+          if (encoderWindow) {
+            encoderWindow.location = data.encoderUrl;
+            setStatus('Delta package is ready. Encoder opened automatically.', 'ok');
+          } else {
+            setStatus('Delta package is ready. Popup was blocked; open encoder from the archive path below.', 'err');
+          }
+        } else {
+          if (encoderWindow) encoderWindow.close();
+          setStatus('Delta package is ready.', 'ok');
+        }
       }).catch(function(err) {
+        if (encoderWindow) encoderWindow.close();
         setStatus(err.error || err.message || 'Build failed', 'err');
         logEl.textContent = [err.stdout, err.stderr].filter(Boolean).join('\n') || '';
       }).finally(function() {
@@ -440,6 +458,7 @@
         to: toInput.value,
         tar: tarInput.value,
         makeTar: makeTarInput.checked,
+        autoEncoder: autoEncoderInput.checked,
         includeWorking: includeWorkingInput.checked
       }));
     }

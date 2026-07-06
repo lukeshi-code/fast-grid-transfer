@@ -239,6 +239,7 @@
         updateRate();
         prefetchFrom(0);
         drawFrames();
+        if (new URLSearchParams(location.search).get('autoplay') === '1') startPlayback();
       }
       if (msg.type === 'frame') {
         frameCache[msg.symbolIndex] = new Uint8Array(msg.frame);
@@ -282,6 +283,25 @@
       currentSource = { type: 'load', files: files };
       loadSource(currentSource);
     });
+
+    async function loadDeltaArchiveFromQuery() {
+      var params = new URLSearchParams(location.search);
+      var token = params.get('deltaToken');
+      if (!token) return;
+      try {
+        fileMeta.textContent = 'Loading delta archive...';
+        encodeMeta.textContent = 'Fetching archive from local Delta Packager...';
+        var response = await fetch('/api/delta/archive/' + encodeURIComponent(token));
+        if (!response.ok) throw new Error(await response.text());
+        var blob = await response.blob();
+        var name = params.get('name') || 'transfer-delta.tar';
+        var file = new File([blob], name, { type: 'application/x-tar' });
+        currentSource = { type: 'load', file: file };
+        loadSource(currentSource);
+      } catch (err) {
+        showWorkerError('Failed to load delta archive: ' + (err.message || err));
+      }
+    }
 
     function loadSource(source) {
       stopPlayback();
@@ -542,6 +562,7 @@
 
     autoSizeCanvas();
     drawFrames();
+    loadDeltaArchiveFromQuery();
   </script>
 </body>
 </html>

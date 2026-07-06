@@ -8,6 +8,7 @@ var childProcess = require('child_process');
 
 var PORT = Number(process.env.PORT || 3000);
 var DIR = __dirname;
+var deltaArchives = {};
 
 function resolveSafePath(baseDir, urlPath) {
   try { urlPath = decodeURIComponent(urlPath); } catch (e) {}
@@ -112,10 +113,25 @@ function handleDeltaCollect(req, res) {
 
       var manifestPath = path.join(path.resolve(out), 'manifest.json');
       var manifest = fs.existsSync(manifestPath) ? JSON.parse(fs.readFileSync(manifestPath, 'utf8')) : null;
+      var archiveToken = null;
+      var archiveUrl = null;
+      var encoderUrl = null;
+      if (tar && fs.existsSync(path.resolve(tar))) {
+        archiveToken = crypto.randomBytes(16).toString('hex');
+        deltaArchives[archiveToken] = {
+          path: path.resolve(tar),
+          name: path.basename(path.resolve(tar)),
+          createdAt: Date.now()
+        };
+        archiveUrl = '/api/delta/archive/' + archiveToken;
+        encoderUrl = '/encoder/?deltaToken=' + encodeURIComponent(archiveToken) + '&name=' + encodeURIComponent(deltaArchives[archiveToken].name) + '&autoplay=1';
+      }
       sendJson(res, 200, {
         ok: true,
         out: path.resolve(out),
         tar: tar ? path.resolve(tar) : null,
+        archiveUrl: archiveUrl,
+        encoderUrl: encoderUrl,
         manifest: manifest,
         stdout: result.stdout || '',
         stderr: result.stderr || ''
@@ -126,6 +142,22 @@ function handleDeltaCollect(req, res) {
   });
 }
 
+function handleDeltaArchive(req, res, token) {
+  var archive = deltaArchives[token];
+  if (!archive || !fs.existsSync(archive.path)) {
+    sendJson(res, 404, { ok: false, error: 'Delta archive is no longer available. Build the package again.' });
+    return;
+  }
+  res.writeHead(200, {
+    'Content-Type': 'application/x-tar',
+    'Content-Length': fs.statSync(archive.path).size,
+    'Content-Disposition': 'attachment; filename="' + archive.name.replace(/"/g, '') + '"',
+    'Cache-Control': 'no-store, max-age=0',
+    'Pragma': 'no-cache'
+  });
+  fs.createReadStream(archive.path).pipe(res);
+}
+
 function handler(req, res) {
   var urlPath = req.url.split('?')[0];
   if (req.method === 'GET' && urlPath === '/api/delta/defaults') {
@@ -134,6 +166,10 @@ function handler(req, res) {
   }
   if (req.method === 'POST' && urlPath === '/api/delta/collect') {
     handleDeltaCollect(req, res);
+    return;
+  }
+  if (req.method === 'GET' && urlPath.indexOf('/api/delta/archive/') === 0) {
+    handleDeltaArchive(req, res, decodeURIComponent(urlPath.slice('/api/delta/archive/'.length)));
     return;
   }
   var filePath = resolveSafePath(DIR, urlPath);
