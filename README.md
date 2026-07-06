@@ -51,6 +51,14 @@ Fill in the repository path, Git base or SVN revision range, then click `Build D
 
 For code directory transfer, open `Delta Packager`, build the delta package, review the changed file list, and let it open the encoder automatically.
 
+If the decoder cannot overwrite files because another process is using them, install the bundled lock helper:
+
+```text
+tools\install-handle.bat
+```
+
+Then restart `run-fast-grid.bat`. The decoder can use `Check File Locks` and `Close Locking Processes` in the Apply Delta panel.
+
 Git example:
 
 ```bash

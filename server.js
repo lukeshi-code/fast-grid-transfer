@@ -93,7 +93,11 @@ function handleHealth(req, res) {
     features: {
       deltaCollect: true,
       deltaArchive: true,
-      deltaApply: true
+      deltaApply: true,
+      lockTools: !!findHandleExe()
+    },
+    tools: {
+      handle: findHandleExe()
     }
   });
 }
@@ -217,6 +221,112 @@ function handleDeltaApply(req, res) {
   });
 }
 
+function handleLockCheck(req, res) {
+  var parsed = new URL(req.url, 'http://localhost');
+  var targetRoot = String(parsed.searchParams.get('targetRoot') || '').trim();
+  if (!targetRoot) {
+    sendJson(res, 400, { ok: false, error: 'Target root is required.' });
+    return;
+  }
+  try {
+    var locks = findFileLocks(targetRoot);
+    sendJson(res, 200, { ok: true, targetRoot: path.resolve(targetRoot), handleExe: findHandleExe(), locks: locks });
+  } catch (error) {
+    sendJson(res, 400, { ok: false, error: error.message, handleExe: findHandleExe() });
+  }
+}
+
+function handleLockClose(req, res) {
+  readJsonBody(req, function(err, body) {
+    if (err) {
+      sendJson(res, 400, { ok: false, error: err.message });
+      return;
+    }
+    try {
+      var targetRoot = String(body.targetRoot || '').trim();
+      var locks = Array.isArray(body.locks) && body.locks.length ? body.locks : findFileLocks(targetRoot);
+      var closed = [];
+      var skipped = [];
+      var failed = [];
+      var seen = {};
+      locks.forEach(function(lock) {
+        var pid = Number(lock.pid);
+        if (!pid || seen[pid]) return;
+        seen[pid] = true;
+        if (!canKillPid(pid, lock.process)) {
+          skipped.push({ pid: pid, process: lock.process, reason: 'protected process' });
+          return;
+        }
+        var result = childProcess.spawnSync('taskkill', ['/F', '/PID', String(pid)], { encoding: 'utf8', windowsHide: true });
+        if (result.status === 0) closed.push({ pid: pid, process: lock.process });
+        else failed.push({ pid: pid, process: lock.process, error: (result.stderr || result.stdout || 'taskkill failed').trim() });
+      });
+      sendJson(res, 200, { ok: true, closed: closed, skipped: skipped, failed: failed });
+    } catch (error) {
+      sendJson(res, 400, { ok: false, error: error.message });
+    }
+  });
+}
+
+function findHandleExe() {
+  var candidates = [
+    path.join(DIR, 'tools', 'handle.exe'),
+    'C:\\Tools\\handle.exe',
+    'C:\\Sysinternals\\handle.exe'
+  ];
+  for (var i = 0; i < candidates.length; i++) {
+    if (fs.existsSync(candidates[i])) return candidates[i];
+  }
+  var where = childProcess.spawnSync('where', ['handle.exe'], { encoding: 'utf8', windowsHide: true });
+  if (where.status === 0) {
+    return where.stdout.split(/\r?\n/).map(function(line) { return line.trim(); }).find(Boolean) || null;
+  }
+  return null;
+}
+
+function findFileLocks(targetRoot) {
+  targetRoot = path.resolve(targetRoot);
+  if (!fs.existsSync(targetRoot) || !fs.statSync(targetRoot).isDirectory()) {
+    throw new Error('Target root does not exist or is not a directory: ' + targetRoot);
+  }
+  var handleExe = findHandleExe();
+  if (!handleExe) {
+    throw new Error('handle.exe was not found. Run tools\\install-handle.bat, then restart run-fast-grid.bat.');
+  }
+  var result = childProcess.spawnSync(handleExe, ['-accepteula', '-nobanner', targetRoot], {
+    cwd: DIR,
+    encoding: 'utf8',
+    windowsHide: true,
+    maxBuffer: 20 * 1024 * 1024
+  });
+  var output = (result.stdout || '') + '\n' + (result.stderr || '');
+  if (result.error) throw result.error;
+  return parseHandleOutput(output).filter(function(lock) {
+    return lock.path && lock.path.toLowerCase().indexOf(targetRoot.toLowerCase()) === 0;
+  });
+}
+
+function parseHandleOutput(output) {
+  var locks = [];
+  output.split(/\r?\n/).forEach(function(line) {
+    var match = line.match(/^\s*(.+?)\s+pid:\s*(\d+)\s+type:\s*(\S+)\s+[0-9A-Fa-f]+:\s*(.+)$/);
+    if (!match) return;
+    locks.push({
+      process: match[1].trim(),
+      pid: Number(match[2]),
+      type: match[3],
+      path: match[4].trim()
+    });
+  });
+  return locks;
+}
+
+function canKillPid(pid, processName) {
+  if (pid === process.pid || pid <= 4) return false;
+  var name = String(processName || '').toLowerCase();
+  return ['system', 'registry', 'idle', 'svchost.exe', 'explorer.exe'].indexOf(name) === -1;
+}
+
 function applyDeltaTar(buffer, targetRoot, applyDeletes) {
   var entries = parseTar(buffer);
   var copied = [];
@@ -240,6 +350,7 @@ function applyDeltaTar(buffer, targetRoot, applyDeletes) {
     try {
       var dest = safeTargetPath(targetRoot, rel);
       fs.mkdirSync(path.dirname(dest), { recursive: true });
+      makeWritableIfExists(dest);
       fs.writeFileSync(dest, entry.data);
       copied.push(rel);
     } catch (error) {
@@ -252,6 +363,7 @@ function applyDeltaTar(buffer, targetRoot, applyDeletes) {
       try {
         var target = safeTargetPath(targetRoot, rel);
         if (fs.existsSync(target) && fs.statSync(target).isFile()) {
+          makeWritableIfExists(target);
           fs.unlinkSync(target);
           deleted.push(rel);
         } else {
@@ -275,6 +387,14 @@ function applyDeltaTar(buffer, targetRoot, applyDeletes) {
       failed: failed.length
     }
   };
+}
+
+function makeWritableIfExists(filePath) {
+  if (!fs.existsSync(filePath)) return;
+  try {
+    var stat = fs.statSync(filePath);
+    fs.chmodSync(filePath, stat.mode | 0o200);
+  } catch (_) {}
 }
 
 function parseTar(buffer) {
@@ -360,6 +480,14 @@ function handler(req, res) {
   }
   if (req.method === 'POST' && urlPath === '/api/delta/apply') {
     handleDeltaApply(req, res);
+    return;
+  }
+  if (req.method === 'GET' && urlPath === '/api/locks/check') {
+    handleLockCheck(req, res);
+    return;
+  }
+  if (req.method === 'POST' && urlPath === '/api/locks/close') {
+    handleLockClose(req, res);
     return;
   }
   var filePath = resolveSafePath(DIR, urlPath);

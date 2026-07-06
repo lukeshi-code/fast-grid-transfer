@@ -289,6 +289,8 @@
         <input id="apply-deletes" type="checkbox">
         Apply deletions from deleted.txt
       </label>
+      <button id="check-locks" class="secondary">Check File Locks</button>
+      <button id="close-locks" class="danger" disabled>Close Locking Processes</button>
       <button id="apply-delta" class="secondary" disabled>Apply Files</button>
       <div id="apply-result" class="apply-result">Waiting for a decoded delta TAR.</div>
     </div>
@@ -335,6 +337,8 @@
     var applyTarget = document.getElementById('apply-target');
     var applyDeletes = document.getElementById('apply-deletes');
     var applyDeltaBtn = document.getElementById('apply-delta');
+    var checkLocksBtn = document.getElementById('check-locks');
+    var closeLocksBtn = document.getElementById('close-locks');
     var applyResult = document.getElementById('apply-result');
     var statusEl = document.getElementById('status');
     var detailEl = document.getElementById('detail');
@@ -421,6 +425,8 @@
       setTimeout(function() { URL.revokeObjectURL(a.href); }, 5000);
     });
     applyDeltaBtn.addEventListener('click', applyDeltaPackage);
+    checkLocksBtn.addEventListener('click', checkFileLocks);
+    closeLocksBtn.addEventListener('click', closeLockingProcesses);
     checkBackendHealth();
 
     worker.onmessage = function(event) {
@@ -1115,6 +1121,73 @@
       }
     }
 
+    var lastLocks = [];
+
+    async function checkFileLocks() {
+      var targetRoot = applyTarget.value.trim();
+      if (!targetRoot) {
+        setApplyResult('Target root is required.', 'err');
+        return;
+      }
+      closeLocksBtn.disabled = true;
+      setApplyResult('Checking file locks...', '');
+      try {
+        var response = await fetch('/api/locks/check?targetRoot=' + encodeURIComponent(targetRoot));
+        var data = await readJsonResponse(response);
+        if (!response.ok || !data.ok) throw new Error(data.error || 'Lock check failed');
+        lastLocks = data.locks || [];
+        if (!lastLocks.length) {
+          setApplyResult('No locking processes found under ' + data.targetRoot, 'ok');
+          return;
+        }
+        closeLocksBtn.disabled = false;
+        var lines = ['Locking processes found: ' + lastLocks.length, ''];
+        lastLocks.slice(0, 120).forEach(function(lock) {
+          lines.push(lock.process + ' pid ' + lock.pid + ' - ' + lock.path);
+        });
+        if (lastLocks.length > 120) lines.push('... +' + (lastLocks.length - 120) + ' more');
+        setApplyResult(lines.join('\n'), 'err');
+      } catch (err) {
+        lastLocks = [];
+        setApplyResult(err.message || String(err), 'err');
+      }
+    }
+
+    async function closeLockingProcesses() {
+      var targetRoot = applyTarget.value.trim();
+      if (!targetRoot) {
+        setApplyResult('Target root is required.', 'err');
+        return;
+      }
+      if (!lastLocks.length) {
+        setApplyResult('No checked locking processes. Run Check File Locks first.', 'err');
+        return;
+      }
+      closeLocksBtn.disabled = true;
+      setApplyResult('Closing locking processes...', '');
+      try {
+        var response = await fetch('/api/locks/close', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ targetRoot: targetRoot, locks: lastLocks })
+        });
+        var data = await readJsonResponse(response);
+        if (!response.ok || !data.ok) throw new Error(data.error || 'Close locks failed');
+        var lines = [
+          'Closed: ' + (data.closed || []).length,
+          'Skipped: ' + (data.skipped || []).length,
+          'Failed: ' + (data.failed || []).length
+        ];
+        appendApplyList(lines, 'Closed processes', data.closed);
+        appendApplyList(lines, 'Skipped processes', data.skipped);
+        appendApplyList(lines, 'Failed processes', data.failed);
+        lastLocks = [];
+        setApplyResult(lines.join('\n'), data.failed && data.failed.length ? 'err' : 'ok');
+      } catch (err) {
+        setApplyResult(err.message || String(err), 'err');
+      }
+    }
+
     async function checkBackendHealth() {
       try {
         var response = await fetch('/api/health');
@@ -1139,6 +1212,7 @@
       lines.push('', title + ':');
       values.slice(0, 120).forEach(function(item) {
         if (typeof item === 'string') lines.push('  ' + item);
+        else if (item.process) lines.push('  ' + item.process + ' pid ' + item.pid + (item.reason ? ' - ' + item.reason : '') + (item.error ? ' - ' + item.error : ''));
         else lines.push('  ' + item.path + (item.reason ? ' - ' + item.reason : '') + (item.error ? ' - ' + item.error : ''));
       });
       if (values.length > 120) lines.push('  ... +' + (values.length - 120) + ' more');

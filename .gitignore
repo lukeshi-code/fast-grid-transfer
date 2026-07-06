@@ -12,3 +12,5 @@ Thumbs.db
 *.mp4
 *.webm
 _site/
+tools/handle*.exe
+tools/Handle.zip
