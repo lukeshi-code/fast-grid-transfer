@@ -85,9 +85,9 @@
     }
     .fill { height: 100%; width: 0%; background: var(--accent); transition: width 0.08s linear; }
     .stage {
-      width: min(92vw, 172vh);
+      width: min(92vw, 92vh);
       max-width: 1500px;
-      aspect-ratio: 2 / 1;
+      aspect-ratio: 1 / 1;
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 16px;
@@ -102,16 +102,17 @@
       background: #05060a;
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
+      grid-template-rows: repeat(2, minmax(0, 1fr));
       gap: 2vh;
       align-items: center;
       justify-content: center;
       overflow: hidden;
     }
     .stage:fullscreen .grid-canvas {
-      width: min(47vw, 94vh);
-      height: min(47vw, 94vh);
-      max-width: min(47vw, 94vh);
-      max-height: min(47vw, 94vh);
+      width: min(48vw, 48vh);
+      height: min(48vw, 48vh);
+      max-width: min(48vw, 48vh);
+      max-height: min(48vw, 48vh);
     }
     .grid-canvas {
       width: 100%;
@@ -125,7 +126,7 @@
     @media (max-width: 900px) {
       body { grid-template-columns: 1fr; }
       aside { border-right: 0; border-bottom: 1px solid var(--border); }
-      .stage { width: min(92vw, 78vh); grid-template-columns: 1fr; aspect-ratio: auto; }
+      .stage { width: min(92vw, 78vh); grid-template-columns: repeat(2, minmax(0, 1fr)); aspect-ratio: 1 / 1; }
       .actions { grid-template-columns: 1fr; }
     }
   </style>
@@ -148,8 +149,8 @@
 
     <label for="color-mode">Color mode</label>
     <select id="color-mode">
-      <option value="2" selected>4 colors - stable</option>
-      <option value="3">8 colors - high speed</option>
+      <option value="3" selected>8 colors - high speed</option>
+      <option value="2">4 colors - stable</option>
     </select>
 
     <div class="actions">
@@ -169,6 +170,8 @@
     <div class="stage" id="stage">
       <canvas id="grid" class="grid-canvas" width="600" height="600"></canvas>
       <canvas id="grid2" class="grid-canvas" width="600" height="600"></canvas>
+      <canvas id="grid3" class="grid-canvas" width="600" height="600"></canvas>
+      <canvas id="grid4" class="grid-canvas" width="600" height="600"></canvas>
     </div>
   </main>
 
@@ -177,8 +180,8 @@
     var DATA_OFFSET = 18;
     var DATA_CELLS = 64;
     var MARKER_CELLS = 18;
-    var GRID_COUNT = 2;
-    var APRILTAG_BASES = [0, 4];
+    var GRID_COUNT = 4;
+    var APRILTAG_BASES = [0, 4, 0, 4];
     var APRILTAG_CODES = [
       0x0d7e00984b, 0x0dda664ca7, 0x0dc4a1c821, 0x0e17b470e9,
       0x0ef91d01b1, 0x0f429cdd73, 0x005da29225, 0x01106cba43
@@ -207,7 +210,12 @@
     var canvasMeta = document.getElementById('canvas-meta');
     var progress = document.getElementById('progress');
     var stage = document.getElementById('stage');
-    var canvases = [document.getElementById('grid'), document.getElementById('grid2')];
+    var canvases = [
+      document.getElementById('grid'),
+      document.getElementById('grid2'),
+      document.getElementById('grid3'),
+      document.getElementById('grid4')
+    ];
     var contexts = canvases.map(function(nextCanvas) { return nextCanvas.getContext('2d'); });
     var worker = new Worker('fast-grid-encoder-worker.js');
 
@@ -233,7 +241,7 @@
         pendingFrames = {};
         lastDrawnFrames = [];
         fileMeta.textContent = meta.name;
-        encodeMeta.textContent = formatSize(meta.fileSize) + ' source, ' + formatSize(meta.streamLength) + ' transfer stream, ' + meta.totalFrames + ' source symbols, ' + meta.payloadBytes + ' bytes/frame/grid, 2-grid RaptorQ 64x64 ' + (meta.colorBits === 3 ? '8-color' : '4-color') + (meta.compression === 'gzip' ? ', gzip ' + formatSize(meta.compressedSize) : '') + (meta.kind === 'folder' ? ', folder tar' : '');
+        encodeMeta.textContent = formatSize(meta.fileSize) + ' source, ' + formatSize(meta.streamLength) + ' transfer stream, ' + meta.totalFrames + ' source symbols, ' + meta.payloadBytes + ' bytes/frame/grid, 4-grid RaptorQ 64x64 ' + (meta.colorBits === 3 ? '8-color' : '4-color') + (meta.compression === 'gzip' ? ', gzip ' + formatSize(meta.compressedSize) : '') + (meta.kind === 'folder' ? ', folder tar' : '');
         playBtn.disabled = false;
         pauseBtn.disabled = false;
         updateRate();
@@ -462,10 +470,10 @@
       var minCellPx = Number(colorMode.value) === 3 || (meta && meta.colorBits === 3) ? 9 : 6;
       var minCanvas = TOTAL_CELLS * minCellPx;
       if (document.fullscreenElement === stage) {
-        visible = Math.floor(Math.min(window.innerWidth / GRID_COUNT, window.innerHeight) * 0.94);
+        visible = Math.floor(Math.min(window.innerWidth / 2, window.innerHeight / 2) * 0.96);
       } else {
         var rect = stage.getBoundingClientRect();
-        visible = Math.floor(Math.min(rect.width / GRID_COUNT, rect.height));
+        visible = Math.floor(Math.min(rect.width / 2, rect.height / 2));
       }
       visible = Math.max(minCanvas, visible);
       var optimal = Math.max(minCanvas, Math.floor(visible / TOTAL_CELLS) * TOTAL_CELLS);

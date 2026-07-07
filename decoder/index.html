@@ -358,10 +358,14 @@
     var overlay = document.getElementById('overlay');
     var overlayCtx = overlay.getContext('2d');
 
-    var worker = new Worker('fast-grid-worker.js');
+    var WORKER_COUNT = 4;
+    var RELOCATE_EVERY = 8;
+    var workers = [];
+    var pendingWorkerReplies = 0;
+    var batchAccepted = 0;
     var PAYLOAD_BYTES = 3408;
-    var EXPECTED_GRIDS = 2;
-    var ROI_TRACKED_GRIDS = 2;
+    var EXPECTED_GRIDS = 4;
+    var ROI_TRACKED_GRIDS = 4;
     var stream = null;
     var canvas = document.createElement('canvas');
     var ctx = canvas.getContext('2d', { willReadFrequently: true });
@@ -429,15 +433,32 @@
     closeLocksBtn.addEventListener('click', closeLockingProcesses);
     checkBackendHealth();
 
-    worker.onmessage = function(event) {
-      busy = false;
-      var msg = event.data;
+    for (var workerIndex = 0; workerIndex < WORKER_COUNT; workerIndex++) {
+      workers.push(createDecodeWorker(workerIndex));
+    }
+
+    function createDecodeWorker(workerIndex) {
+      var nextWorker = new Worker('fast-grid-worker.js');
+      nextWorker.onmessage = function(event) {
+        handleWorkerMessage(event.data, workerIndex);
+      };
+      nextWorker.onerror = function(err) {
+        detailEl.textContent = err.message || 'Worker error';
+        lastDebug = { stage: 'worker-error', error: err.message || 'Worker error', worker: workerIndex };
+        finishWorkerReply();
+      };
+      return nextWorker;
+    }
+
+    function handleWorkerMessage(msg, workerIndex) {
       if (msg.type === 'frames') {
         lastDebug = msg.debug || {};
+        lastDebug.worker = workerIndex;
         var batchBox = null;
         var batchSlots = [];
         for (var i = 0; i < msg.frames.length; i++) {
           handleAcceptedFrame(msg.frames[i], false);
+          batchAccepted++;
           batchBox = unionBbox(batchBox, msg.frames[i].bbox);
           if (msg.frames[i].gridSlot != null) batchSlots.push(msg.frames[i].gridSlot);
         }
@@ -445,22 +466,33 @@
         drawOverlay();
       } else if (msg.type === 'frame') {
         lastDebug = msg.debug || {};
+        lastDebug.worker = workerIndex;
         handleAcceptedFrame(msg.frame);
+        batchAccepted++;
         drawOverlay();
       } else if (msg.type === 'miss') {
         lastDebug = msg.debug || {};
+        lastDebug.worker = workerIndex;
         if (msg.bbox) updateRoiFromWorker(msg.bbox, true);
         handleScanMiss(msg.reason || 'unknown');
         markFailedFrameFromDebug(lastDebug);
         drawOverlay();
       } else if (msg.type === 'error') {
         detailEl.textContent = msg.message;
-        lastDebug = { stage: 'worker-error', error: msg.message };
+        lastDebug = { stage: 'worker-error', error: msg.message, worker: workerIndex };
       }
       renderDiagnostics();
       renderSummary();
+      finishWorkerReply();
+    }
+
+    function finishWorkerReply() {
+      pendingWorkerReplies = Math.max(0, pendingWorkerReplies - 1);
+      if (pendingWorkerReplies > 0) return;
+      busy = false;
+      if (!batchAccepted && roi) handleScanMiss('batch');
       scheduleScan();
-    };
+    }
 
     function handleAcceptedFrame(frame, updateRoi) {
       var visualKey = (frame.gridSlot == null ? 0 : frame.gridSlot) + ':' + frame.symbolIndex;
@@ -527,6 +559,8 @@
       if (raf) cancelAnimationFrame(raf);
       raf = null;
       busy = false;
+      pendingWorkerReplies = 0;
+      batchAccepted = 0;
       if (stream) {
         stream.getTracks().forEach(function(track) { track.stop(); });
         stream = null;
@@ -621,8 +655,14 @@
       lastScanSource = source;
       drawOverlay();
       busy = true;
+      batchAccepted = 0;
+      pendingWorkerReplies = workers.length;
       scanCount++;
-      worker.postMessage({ type: 'frame', image: image }, [image.data.buffer]);
+      var shouldRelocate = !roi || (scanCount % RELOCATE_EVERY === 1);
+      for (var i = 0; i < workers.length; i++) {
+        var copy = new ImageData(new Uint8ClampedArray(image.data), image.width, image.height);
+        workers[i].postMessage({ type: 'frame', image: copy, slotFilter: i, frameSeq: scanCount, relocate: shouldRelocate }, [copy.data.buffer]);
+      }
       updateRate();
     }
 
@@ -671,22 +711,22 @@
     function expandParallelGridRoi(box, slots) {
       if (ROI_TRACKED_GRIDS < 2 || !box) return box;
       var aspect = box.width / Math.max(1, box.height);
-      if (aspect >= 1.35) return normalizeWideRoi(box);
+      if (ROI_TRACKED_GRIDS === 2 && aspect >= 1.35) return normalizeWideRoi(box);
+      if (ROI_TRACKED_GRIDS === 4 && aspect >= 0.82 && aspect <= 1.22 && slots && slots.length > 1) return normalizeGridRoi(box, 4);
 
-      var hasSlot0 = slots && slots.indexOf(0) !== -1;
-      var hasSlot1 = slots && slots.indexOf(1) !== -1;
+      var firstSlot = slots && slots.length ? slots[0] : 0;
+      var columns = ROI_TRACKED_GRIDS === 4 ? 2 : ROI_TRACKED_GRIDS;
+      var rows = ROI_TRACKED_GRIDS === 4 ? 2 : 1;
+      var col = firstSlot % columns;
+      var row = Math.floor(firstSlot / columns);
       var marginX = box.width * 0.12;
       var marginY = box.height * 0.12;
-      var x;
-      if (hasSlot1 && !hasSlot0) x = box.x - box.width - marginX;
-      else if (hasSlot0 && !hasSlot1) x = box.x - marginX;
-      else x = box.x - box.width * 0.58;
-
       var videoW = video.videoWidth || (pendingScan ? pendingScan.sw : 0) || (box.x + box.width);
       var videoH = video.videoHeight || (pendingScan ? pendingScan.sh : 0) || (box.y + box.height);
-      var y = box.y - marginY;
-      var width = box.width * 2 + marginX * 2;
-      var height = box.height + marginY * 2;
+      var x = box.x - box.width * col - marginX;
+      var y = box.y - box.height * row - marginY;
+      var width = box.width * columns + marginX * 2;
+      var height = box.height * rows + marginY * 2;
       var clampedX = Math.max(0, x);
       var clampedY = Math.max(0, y);
       return {
@@ -694,6 +734,21 @@
         y: clampedY,
         width: Math.max(1, Math.min(videoW - clampedX, width - (clampedX - x))),
         height: Math.max(1, Math.min(videoH - clampedY, height - (clampedY - y)))
+      };
+    }
+
+    function normalizeGridRoi(box, gridCount) {
+      var videoW = video.videoWidth || (pendingScan ? pendingScan.sw : 0) || (box.x + box.width);
+      var videoH = video.videoHeight || (pendingScan ? pendingScan.sh : 0) || (box.y + box.height);
+      var marginX = box.width * (gridCount === 4 ? 0.05 : 0.06);
+      var marginY = box.height * (gridCount === 4 ? 0.05 : 0.10);
+      var x = Math.max(0, box.x - marginX);
+      var y = Math.max(0, box.y - marginY);
+      return {
+        x: x,
+        y: y,
+        width: Math.max(1, Math.min(videoW - x, box.width + marginX * 2)),
+        height: Math.max(1, Math.min(videoH - y, box.height + marginY * 2))
       };
     }
 
@@ -825,6 +880,7 @@
     }
 
     function getPacketInfo(packet, frame) {
+      var visualKind = frame.packetIndex < frame.sourceSymbols ? 'source' : 'repair';
       try {
         var parsed = RaptorEncodingPacket.deserialize(packet);
         var sbn = parsed.source_block_number();
@@ -835,27 +891,30 @@
           key: key,
           sbn: sbn,
           esi: esi,
-          kind: esi < frame.sourceSymbols ? 'source' : 'repair'
+          visualIndex: frame.packetIndex,
+          kind: visualKind
         };
       } catch (err) {
         return {
           key: 'visual:' + frame.symbolIndex,
           sbn: 0,
           esi: frame.packetIndex,
-          kind: frame.packetIndex < frame.sourceSymbols ? 'source' : 'repair'
+          visualIndex: frame.packetIndex,
+          kind: visualKind
         };
       }
     }
 
     function markPacketCell(packetInfo, frame) {
       if (!cells.length) return;
-      if (packetInfo.kind === 'source' && packetInfo.esi < cells.length) {
-        if (!sourcePacketsSeen[packetInfo.esi]) {
-          sourcePacketsSeen[packetInfo.esi] = true;
+      var cellIndex = packetInfo.visualIndex;
+      if (packetInfo.kind === 'source' && cellIndex < cells.length) {
+        if (!sourcePacketsSeen[cellIndex]) {
+          sourcePacketsSeen[cellIndex] = true;
           sourcePacketCount++;
         }
-        cells[packetInfo.esi].className = 'cell ok';
-        cells[packetInfo.esi].title = 'Direct source symbol ' + packetInfo.esi;
+        cells[cellIndex].className = 'cell ok';
+        cells[cellIndex].title = 'Direct source symbol ' + cellIndex;
       } else {
         if (!repairPacketsSeen[packetInfo.key]) {
           repairPacketsSeen[packetInfo.key] = true;
@@ -999,6 +1058,9 @@
         ['Scan window', scan],
         ['ROI', roiText],
         ['Detected box', detText],
+        ['Worker pool', WORKER_COUNT + ' slots, relocate every ' + RELOCATE_EVERY + ' frames'],
+        ['Worker slot', valueOrDash(lastDebug.worker)],
+        ['Homography cache', lastDebug.cache || '-'],
         ['Worker stage', lastDebug.stage || '-'],
         ['Worker ms', valueOrDash(lastDebug.workerMs)],
         ['Input image', lastDebug.image || '-'],

@@ -8,6 +8,7 @@ var FRAME_BYTES_2 = DATA_CELLS * DATA_CELLS * 2 / 8;
 var FRAME_BYTES_3 = DATA_CELLS * DATA_CELLS * 3 / 8;
 var PROTOCOL_VERSION = 7;
 var TAG_BASES = [0, 4];
+var CACHE_MAX_AGE = 8;
 var TAG_CENTER = {
   tl: [9, 9],
   tr: [91, 9],
@@ -29,11 +30,14 @@ var detectorReady = null;
 var lastMissReason = 'unknown';
 var lastDebugBox = null;
 var lastDebug = null;
+var homographyCache = {};
+var workerFrameSeq = 0;
 
 self.onmessage = async function(event) {
   var msg = event.data;
   if (!msg || msg.type !== 'frame') return;
   try {
+    workerFrameSeq = msg.frameSeq || (workerFrameSeq + 1);
     lastMissReason = 'unknown';
     lastDebugBox = null;
     lastDebug = {
@@ -45,10 +49,11 @@ self.onmessage = async function(event) {
       apriltagIds: '',
       missingMarkers: '',
       parse2: '',
-      parse3: ''
+      parse3: '',
+      cache: ''
     };
     var t0 = Date.now();
-    var decoded = await decodeImage(msg.image);
+    var decoded = await decodeImage(msg.image, msg.slotFilter, msg.relocate === true);
     if (lastDebug) lastDebug.workerMs = Date.now() - t0;
     if (decoded && decoded.length) {
       var transfers = decoded.map(function(frame) { return frame.packet; });
@@ -69,12 +74,24 @@ async function getDetector() {
   return detector;
 }
 
-async function decodeImage(image) {
+async function decodeImage(image, slotFilter, relocate) {
+  if (slotFilter != null && !relocate) {
+    var cached = homographyCache[slotFilter];
+    if (cached && workerFrameSeq - cached.frameSeq <= CACHE_MAX_AGE) {
+      var cachedFrame = decodeGridFromHomography(image, cached.homography, slotFilter, null, true);
+      if (cachedFrame) {
+        if (lastDebug) lastDebug.cache = 'hit slot ' + slotFilter;
+        return [cachedFrame];
+      }
+      if (lastDebug) lastDebug.cache = 'miss slot ' + slotFilter;
+    }
+  }
   if (lastDebug) lastDebug.stage = 'apriltag';
   var groups = await findAprilTagMarkerGroups(image);
   if (!groups.length) return miss('apriltag');
   var frames = [];
   for (var i = 0; i < groups.length; i++) {
+    if (slotFilter != null && groups[i].slot !== slotFilter) continue;
     var frame = decodeGrid(image, groups[i].marks, groups[i].slot);
     if (frame) frames.push(frame);
   }
@@ -83,15 +100,17 @@ async function decodeImage(image) {
 }
 
 function decodeGrid(image, marks, slot) {
+  if (lastDebug) lastDebug.stage = 'homography';
+  var homography = buildGridHomography(marks);
+  if (!homography) return miss('homography');
+  return decodeGridFromHomography(image, homography, slot, marks, false);
+}
+
+function decodeGridFromHomography(image, homography, slot, marks, fromCache) {
   var data = image.data;
   var w = image.width;
   var h = image.height;
 
-  if (lastDebug) lastDebug.stage = 'homography';
-  var homography = buildGridHomography(marks);
-  if (!homography) return miss('homography');
-
-  var bbox = markerBounds(marks);
   var dataBox = projectedDataBox(homography);
   var gridBox = projectedGridBox(homography);
   lastDebugBox = { x: gridBox.x, y: gridBox.y, width: gridBox.width, height: gridBox.height, confidence: gridBox.confidence };
@@ -109,15 +128,18 @@ function decodeGrid(image, marks, slot) {
   }).join(' | ');
   var frame2 = new Uint8Array(FRAME_BYTES_2);
   var frame3 = new Uint8Array(FRAME_BYTES_3);
+  var lut4 = createPaletteLut(palette, 4);
+  var lut8 = createPaletteLut(palette, 8);
+  var sampleRadius = Math.max(1, Math.max(dataBox.width, dataBox.height) / DATA_CELLS * 0.22);
 
   if (lastDebug) lastDebug.stage = 'sample';
   for (var gy = 0; gy < DATA_CELLS; gy++) {
     for (var gx = 0; gx < DATA_CELLS; gx++) {
       var point = project(homography, DATA_OFFSET + gx + 0.5, DATA_OFFSET + gy + 0.5);
       if (!point || point.x < 0 || point.x >= w || point.y < 0 || point.y >= h) return miss('bounds');
-      var rgb = sampleRgb(data, w, h, point.x, point.y, bbox.cell * 0.22);
-      setBits(frame2, gy * DATA_CELLS + gx, nearestPalette(rgb, palette, 4), 2);
-      setBits(frame3, gy * DATA_CELLS + gx, nearestPalette(rgb, palette, 8), 3);
+      var rgb = sampleRgb(data, w, h, point.x, point.y, sampleRadius);
+      setBits(frame2, gy * DATA_CELLS + gx, nearestPaletteLut(rgb, lut4), 2);
+      setBits(frame3, gy * DATA_CELLS + gx, nearestPaletteLut(rgb, lut8), 3);
     }
   }
 
@@ -125,11 +147,18 @@ function decodeGrid(image, marks, slot) {
   var parsed2 = parseFrame(frame2, 2, homography);
   var decoded2 = parsed2.frame;
   if (lastDebug) lastDebug.parse2 = parsed2.reason;
-  if (decoded2) return decoded2;
+  if (decoded2) {
+    homographyCache[slot] = { homography: homography.slice(), frameSeq: workerFrameSeq };
+    return decoded2;
+  }
   var parsed3 = parseFrame(frame3, 3, homography);
   var decoded3 = parsed3.frame;
   if (lastDebug) lastDebug.parse3 = parsed3.reason;
-  if (decoded3) return decoded3;
+  if (decoded3) {
+    homographyCache[slot] = { homography: homography.slice(), frameSeq: workerFrameSeq };
+    return decoded3;
+  }
+  if (fromCache) delete homographyCache[slot];
   return null;
 }
 
@@ -137,41 +166,34 @@ async function findAprilTagMarkerGroups(image) {
   var detectorInstance = await getDetector();
   var list = detectorInstance.detect(toGrayscale(image), image.width, image.height) || [];
   var ids = [];
-  var groups = [];
-  var foundByBase = {};
+  var candidates = [];
+  var grouped = [];
   for (var b = 0; b < TAG_BASES.length; b++) {
-    foundByBase[TAG_BASES[b]] = {};
+    grouped[TAG_BASES[b]] = { tl: [], tr: [], bl: [], br: [] };
   }
   for (var i = 0; i < list.length; i++) {
     var marker = list[i];
     ids.push(marker.id);
     for (var baseIndex = 0; baseIndex < TAG_BASES.length; baseIndex++) {
       var base = TAG_BASES[baseIndex];
-      if (marker.id === base + 0) foundByBase[base].tl = marker;
-      if (marker.id === base + 1) foundByBase[base].tr = marker;
-      if (marker.id === base + 2) foundByBase[base].bl = marker;
-      if (marker.id === base + 3) foundByBase[base].br = marker;
+      if (marker.id === base + 0) grouped[base].tl.push(marker);
+      if (marker.id === base + 1) grouped[base].tr.push(marker);
+      if (marker.id === base + 2) grouped[base].bl.push(marker);
+      if (marker.id === base + 3) grouped[base].br.push(marker);
     }
   }
   var missing = [];
+  var seenBase = {};
   for (var g = 0; g < TAG_BASES.length; g++) {
     var nextBase = TAG_BASES[g];
-    var found = foundByBase[nextBase];
-    var missingForGroup = ['tl', 'tr', 'bl', 'br'].filter(function(key) { return !found[key]; });
-    if (!missingForGroup.length) {
-      groups.push({
-        slot: g,
-        marks: {
-          tl: markerInfo(found.tl),
-          tr: markerInfo(found.tr),
-          bl: markerInfo(found.bl),
-          br: markerInfo(found.br)
-        }
-      });
-    } else {
-      missing.push('g' + g + ':' + missingForGroup.join('/'));
-    }
+    if (seenBase[nextBase]) continue;
+    seenBase[nextBase] = true;
+    var found = grouped[nextBase];
+    var missingForGroup = ['tl', 'tr', 'bl', 'br'].filter(function(key) { return !found[key].length; });
+    if (missingForGroup.length) missing.push('base' + nextBase + ':' + missingForGroup.join('/'));
+    candidates = candidates.concat(buildGroupCandidates(found, nextBase));
   }
+  var groups = assignSlots(selectMarkerGroups(candidates));
   if (lastDebug) {
     lastDebug.apriltagFound = list.length;
     lastDebug.apriltagIds = ids.join(',');
@@ -179,6 +201,95 @@ async function findAprilTagMarkerGroups(image) {
     lastDebug.missingMarkers = missing.join(' ');
   }
   return groups;
+}
+
+function buildGroupCandidates(found, base) {
+  var out = [];
+  for (var a = 0; a < found.tl.length; a++) {
+    for (var b = 0; b < found.tr.length; b++) {
+      for (var c = 0; c < found.bl.length; c++) {
+        for (var d = 0; d < found.br.length; d++) {
+          var marks = {
+            tl: markerInfo(found.tl[a]),
+            tr: markerInfo(found.tr[b]),
+            bl: markerInfo(found.bl[c]),
+            br: markerInfo(found.br[d])
+          };
+          var score = scoreMarkerGroup(marks);
+          if (score < Infinity) {
+            out.push({
+              base: base,
+              marks: marks,
+              score: score,
+              keys: [found.tl[a], found.tr[b], found.bl[c], found.br[d]].map(markerKey),
+              cx: (marks.tl.cx + marks.tr.cx + marks.bl.cx + marks.br.cx) / 4,
+              cy: (marks.tl.cy + marks.tr.cy + marks.bl.cy + marks.br.cy) / 4
+            });
+          }
+        }
+      }
+    }
+  }
+  return out;
+}
+
+function scoreMarkerGroup(marks) {
+  if (!(marks.tl.cx < marks.tr.cx && marks.bl.cx < marks.br.cx && marks.tl.cy < marks.bl.cy && marks.tr.cy < marks.br.cy)) return Infinity;
+  var top = distance(marks.tl, marks.tr);
+  var bottom = distance(marks.bl, marks.br);
+  var left = distance(marks.tl, marks.bl);
+  var right = distance(marks.tr, marks.br);
+  var width = (top + bottom) / 2;
+  var height = (left + right) / 2;
+  if (width < 40 || height < 40) return Infinity;
+  var skew = Math.abs(top - bottom) / width + Math.abs(left - right) / height + Math.abs(width - height) / Math.max(width, height);
+  var cross = Math.abs((marks.tl.cy + marks.tr.cy) / 2 - (marks.bl.cy + marks.br.cy) / 2) / height;
+  return skew + Math.abs(1 - cross) * 0.25;
+}
+
+function selectMarkerGroups(candidates) {
+  var selected = [];
+  var used = {};
+  candidates.sort(function(a, b) { return a.score - b.score; });
+  for (var i = 0; i < candidates.length; i++) {
+    var candidate = candidates[i];
+    var conflict = candidate.keys.some(function(key) { return used[key]; });
+    if (conflict) continue;
+    selected.push(candidate);
+    candidate.keys.forEach(function(key) { used[key] = true; });
+    if (selected.length >= 4) break;
+  }
+  return selected;
+}
+
+function assignSlots(groups) {
+  groups.sort(function(a, b) { return a.cy === b.cy ? a.cx - b.cx : a.cy - b.cy; });
+  var top = groups.slice(0, 2).sort(function(a, b) { return a.cx - b.cx; });
+  var bottom = groups.slice(2, 4).sort(function(a, b) { return a.cx - b.cx; });
+  return top.concat(bottom).map(function(group, slot) {
+    return { slot: slot, marks: group.marks };
+  });
+}
+
+function markerKey(marker) {
+  var c = marker.center || averageCorners(marker.corners);
+  return marker.id + '@' + Math.round(c.x) + ',' + Math.round(c.y);
+}
+
+function averageCorners(corners) {
+  var cx = 0;
+  var cy = 0;
+  for (var i = 0; i < corners.length; i++) {
+    cx += corners[i].x;
+    cy += corners[i].y;
+  }
+  return { x: cx / corners.length, y: cy / corners.length };
+}
+
+function distance(a, b) {
+  var dx = a.cx - b.cx;
+  var dy = a.cy - b.cy;
+  return Math.sqrt(dx * dx + dy * dy);
 }
 
 function markerInfo(marker) {
@@ -376,6 +487,25 @@ function nearestPalette(rgb, palette, count) {
     }
   }
   return best;
+}
+
+function createPaletteLut(palette, count) {
+  var lut = new Uint8Array(32 * 32 * 32);
+  for (var r = 0; r < 32; r++) {
+    for (var g = 0; g < 32; g++) {
+      for (var b = 0; b < 32; b++) {
+        lut[(r << 10) | (g << 5) | b] = nearestPalette([r * 8 + 4, g * 8 + 4, b * 8 + 4], palette, count);
+      }
+    }
+  }
+  return lut;
+}
+
+function nearestPaletteLut(rgb, lut) {
+  var r = Math.max(0, Math.min(31, rgb[0] >> 3));
+  var g = Math.max(0, Math.min(31, rgb[1] >> 3));
+  var b = Math.max(0, Math.min(31, rgb[2] >> 3));
+  return lut[(r << 10) | (g << 5) | b];
 }
 
 function setBits(bytes, index, value, bits) {
