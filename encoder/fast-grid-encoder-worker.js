@@ -1,6 +1,11 @@
-var DATA_CELLS = 64;
+var TOTAL_COLS = 236;
+var TOTAL_ROWS = 86;
+var DATA_OFFSET_X = 18;
+var DATA_OFFSET_Y = 18;
+var DATA_COLS = 200;
+var DATA_ROWS = 50;
 var HEADER_BYTES = 48;
-var PROTOCOL_VERSION = 7;
+var PROTOCOL_VERSION = 8;
 var STREAM_VERSION = 4;
 var FLAG_FOLDER = 4;
 var FLAG_GZIP = 8;
@@ -124,7 +129,8 @@ async function prepareStream(name, size) {
       payloadBytes: payloadBytes,
       raptorPacketBytes: rqMtu + 4,
       headerBytes: HEADER_BYTES,
-      dataCells: DATA_CELLS,
+      dataCols: DATA_COLS,
+      dataRows: DATA_ROWS,
       colorBits: colorBits,
       raptorq: true,
       repairPacketsPerBlock: repairPacketsPerBlock
@@ -164,8 +170,8 @@ async function buildFrame(symbolIndex) {
   writeU16(frame, 28, rqMtu);
   writeU16(frame, 30, repairPacketsPerBlock);
   writeU32(frame, 32, packetSchedule.length >>> 0);
-  writeU16(frame, 36, DATA_CELLS);
-  writeU16(frame, 38, HEADER_BYTES);
+  writeU16(frame, 36, DATA_COLS);
+  writeU16(frame, 38, DATA_ROWS);
   writeU32(frame, 40, packetIndex >>> 0);
   writeU32(frame, 44, scheduleIndex >>> 0);
   frame.set(packet, HEADER_BYTES);
@@ -200,7 +206,7 @@ function buildPacketSchedule(sourceCount, totalCount) {
 }
 
 function getFrameBytes(bits) {
-  return DATA_CELLS * DATA_CELLS * bits / 8;
+  return DATA_COLS * DATA_ROWS * bits / 8;
 }
 
 function postWorkerError(err) {

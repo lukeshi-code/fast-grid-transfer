@@ -35,7 +35,9 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      padding: 24px;
+      padding: 6px;
+      height: 100vh;
+      overflow: hidden;
     }
     h1 { font-size: 1.25rem; margin: 0 0 4px; }
     p { color: var(--dim); line-height: 1.45; }
@@ -85,12 +87,14 @@
     }
     .fill { height: 100%; width: 0%; background: var(--accent); transition: width 0.08s linear; }
     .stage {
-      width: min(92vw, 92vh);
-      max-width: 1500px;
-      aspect-ratio: 1 / 1;
+      width: 100%;
+      height: 100%;
+      max-width: none;
+      aspect-ratio: auto;
       display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 16px;
+      grid-template-columns: 1fr;
+      grid-template-rows: repeat(2, minmax(0, 1fr));
+      gap: 4px;
       place-items: center;
     }
     .stage:fullscreen {
@@ -101,22 +105,25 @@
       padding: 0;
       background: #05060a;
       display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
+      grid-template-columns: 1fr;
       grid-template-rows: repeat(2, minmax(0, 1fr));
-      gap: 2vh;
+      gap: 2px;
       align-items: center;
       justify-content: center;
       overflow: hidden;
     }
     .stage:fullscreen .grid-canvas {
-      width: min(48vw, 48vh);
-      height: min(48vw, 48vh);
-      max-width: min(48vw, 48vh);
-      max-height: min(48vw, 48vh);
+      width: auto;
+      height: auto;
+      max-width: none;
+      max-height: none;
     }
     .grid-canvas {
-      width: 100%;
-      aspect-ratio: 1;
+      width: auto;
+      height: auto;
+      max-width: 100%;
+      max-height: 100%;
+      aspect-ratio: 236 / 86;
       image-rendering: pixelated;
       background: #05060a;
       border-radius: 4px;
@@ -126,7 +133,7 @@
     @media (max-width: 900px) {
       body { grid-template-columns: 1fr; }
       aside { border-right: 0; border-bottom: 1px solid var(--border); }
-      .stage { width: min(92vw, 78vh); grid-template-columns: repeat(2, minmax(0, 1fr)); aspect-ratio: 1 / 1; }
+      .stage { width: 100%; height: min(92vw, 78vh); grid-template-columns: 1fr; aspect-ratio: auto; }
       .actions { grid-template-columns: 1fr; }
     }
   </style>
@@ -149,8 +156,8 @@
 
     <label for="color-mode">Color mode</label>
     <select id="color-mode">
-      <option value="3" selected>8 colors - high speed</option>
-      <option value="2">4 colors - stable</option>
+      <option value="2" selected>4 colors - stable</option>
+      <option value="3">8 colors - high speed</option>
     </select>
 
     <div class="actions">
@@ -170,18 +177,19 @@
     <div class="stage" id="stage">
       <canvas id="grid" class="grid-canvas" width="600" height="600"></canvas>
       <canvas id="grid2" class="grid-canvas" width="600" height="600"></canvas>
-      <canvas id="grid3" class="grid-canvas" width="600" height="600"></canvas>
-      <canvas id="grid4" class="grid-canvas" width="600" height="600"></canvas>
     </div>
   </main>
 
   <script>
-    var TOTAL_CELLS = 100;
-    var DATA_OFFSET = 18;
-    var DATA_CELLS = 64;
+    var TOTAL_COLS = 236;
+    var TOTAL_ROWS = 86;
+    var DATA_OFFSET_X = 18;
+    var DATA_OFFSET_Y = 18;
+    var DATA_COLS = 200;
+    var DATA_ROWS = 50;
     var MARKER_CELLS = 18;
-    var GRID_COUNT = 4;
-    var APRILTAG_BASES = [0, 4, 0, 4];
+    var GRID_COUNT = 2;
+    var APRILTAG_BASES = [0, 4];
     var APRILTAG_CODES = [
       0x0d7e00984b, 0x0dda664ca7, 0x0dc4a1c821, 0x0e17b470e9,
       0x0ef91d01b1, 0x0f429cdd73, 0x005da29225, 0x01106cba43
@@ -212,9 +220,7 @@
     var stage = document.getElementById('stage');
     var canvases = [
       document.getElementById('grid'),
-      document.getElementById('grid2'),
-      document.getElementById('grid3'),
-      document.getElementById('grid4')
+      document.getElementById('grid2')
     ];
     var contexts = canvases.map(function(nextCanvas) { return nextCanvas.getContext('2d'); });
     var worker = new Worker('fast-grid-encoder-worker.js');
@@ -229,6 +235,11 @@
     var warmupTarget = 8;
     var lastDrawnFrames = [];
     var markerPatterns = [];
+    var markerImages = [];
+    var REQUIRED_MARKER_IMAGES = 8;
+    var markerImagesLoaded = 0;
+    var markersReady = false;
+    var pendingAutoplay = false;
     var currentSource = null;
 
     worker.onmessage = function(event) {
@@ -241,13 +252,17 @@
         pendingFrames = {};
         lastDrawnFrames = [];
         fileMeta.textContent = meta.name;
-        encodeMeta.textContent = formatSize(meta.fileSize) + ' source, ' + formatSize(meta.streamLength) + ' transfer stream, ' + meta.totalFrames + ' source symbols, ' + meta.payloadBytes + ' bytes/frame/grid, 4-grid RaptorQ 64x64 ' + (meta.colorBits === 3 ? '8-color' : '4-color') + (meta.compression === 'gzip' ? ', gzip ' + formatSize(meta.compressedSize) : '') + (meta.kind === 'folder' ? ', folder tar' : '');
-        playBtn.disabled = false;
-        pauseBtn.disabled = false;
+        encodeMeta.textContent = formatSize(meta.fileSize) + ' source, ' + formatSize(meta.streamLength) + ' transfer stream, ' + meta.totalFrames + ' source symbols, ' + meta.payloadBytes + ' bytes/frame/grid, 2-grid RaptorQ ' + DATA_COLS + 'x' + DATA_ROWS + ' rectangular ' + (meta.colorBits === 3 ? '8-color' : '4-color') + (meta.compression === 'gzip' ? ', gzip ' + formatSize(meta.compressedSize) : '') + (meta.kind === 'folder' ? ', folder tar' : '');
+        playBtn.disabled = !markersReady;
+        pauseBtn.disabled = !markersReady;
+        if (!markersReady) encodeMeta.textContent += ', loading 8 AprilTag markers';
         updateRate();
         prefetchFrom(0);
         drawFrames();
-        if (new URLSearchParams(location.search).get('autoplay') === '1') startPlayback();
+        if (new URLSearchParams(location.search).get('autoplay') === '1') {
+          if (markersReady) startPlayback();
+          else pendingAutoplay = true;
+        }
       }
       if (msg.type === 'frame') {
         frameCache[msg.symbolIndex] = new Uint8Array(msg.frame);
@@ -354,9 +369,15 @@
     if ('ResizeObserver' in window) {
       new ResizeObserver(autoSizeCanvas).observe(stage);
     }
+    preloadAprilTagImages();
 
     function startPlayback() {
       if (!meta) return;
+      if (!markersReady) {
+        frameMeta.textContent = 'Waiting for 8 AprilTag markers to load';
+        pendingAutoplay = true;
+        return;
+      }
       stopPlayback();
       prefetchFrom(frameIndex);
       if (!frameCache[frameIndex]) {
@@ -440,26 +461,27 @@
     function drawFrameSlot(slot, frame, note) {
       var canvas = canvases[slot];
       var ctx = contexts[slot];
-      var size = canvas.width;
-      var cell = size / TOTAL_CELLS;
+      var width = canvas.width;
+      var height = canvas.height;
+      var cell = width / TOTAL_COLS;
       var markerBase = APRILTAG_BASES[slot] || 0;
       ctx.fillStyle = '#05060a';
-      ctx.fillRect(0, 0, size, size);
+      ctx.fillRect(0, 0, width, height);
       drawAprilTagMarker(ctx, 0, 0, markerBase + 0, cell);
-      drawAprilTagMarker(ctx, TOTAL_CELLS - MARKER_CELLS, 0, markerBase + 1, cell);
-      drawAprilTagMarker(ctx, 0, TOTAL_CELLS - MARKER_CELLS, markerBase + 2, cell);
-      drawAprilTagMarker(ctx, TOTAL_CELLS - MARKER_CELLS, TOTAL_CELLS - MARKER_CELLS, markerBase + 3, cell);
+      drawAprilTagMarker(ctx, TOTAL_COLS - MARKER_CELLS, 0, markerBase + 1, cell);
+      drawAprilTagMarker(ctx, 0, TOTAL_ROWS - MARKER_CELLS, markerBase + 2, cell);
+      drawAprilTagMarker(ctx, TOTAL_COLS - MARKER_CELLS, TOTAL_ROWS - MARKER_CELLS, markerBase + 3, cell);
       drawColorCalibration(ctx, cell);
       drawSyncLines(ctx, cell);
 
       if (frame) {
-        for (var y = 0; y < DATA_CELLS; y++) {
-          for (var x = 0; x < DATA_CELLS; x++) {
-            var cellIndex = y * DATA_CELLS + x;
+        for (var y = 0; y < DATA_ROWS; y++) {
+          for (var x = 0; x < DATA_COLS; x++) {
+            var cellIndex = y * DATA_COLS + x;
             var bits = meta && meta.colorBits === 3 ? 3 : 2;
             var v = readBits(frame, cellIndex, bits);
             ctx.fillStyle = COLORS[v];
-            ctx.fillRect((x + DATA_OFFSET) * cell, (y + DATA_OFFSET) * cell, Math.ceil(cell), Math.ceil(cell));
+            ctx.fillRect((x + DATA_OFFSET_X) * cell, (y + DATA_OFFSET_Y) * cell, Math.ceil(cell), Math.ceil(cell));
           }
         }
       }
@@ -468,21 +490,24 @@
     function autoSizeCanvas() {
       var visible;
       var minCellPx = Number(colorMode.value) === 3 || (meta && meta.colorBits === 3) ? 9 : 6;
-      var minCanvas = TOTAL_CELLS * minCellPx;
       if (document.fullscreenElement === stage) {
-        visible = Math.floor(Math.min(window.innerWidth / 2, window.innerHeight / 2) * 0.96);
+        visible = Math.floor(Math.min(window.innerWidth / TOTAL_COLS, ((window.innerHeight - 2) / 2) / TOTAL_ROWS));
       } else {
         var rect = stage.getBoundingClientRect();
-        visible = Math.floor(Math.min(rect.width / 2, rect.height / 2));
+        visible = Math.floor(Math.min(rect.width / TOTAL_COLS, ((rect.height - 4) / 2) / TOTAL_ROWS));
       }
-      visible = Math.max(minCanvas, visible);
-      var optimal = Math.max(minCanvas, Math.floor(visible / TOTAL_CELLS) * TOTAL_CELLS);
-      canvasMeta.textContent = 'Canvas: ' + optimal + ' x ' + optimal + ' px, ' + (optimal / TOTAL_CELLS).toFixed(1) + ' px/cell' + (minCellPx > 6 ? ' (8-color target)' : '');
+      var cellPx = Math.max(2, Math.floor(visible));
+      var optimalW = TOTAL_COLS * cellPx;
+      var optimalH = TOTAL_ROWS * cellPx;
+      var targetText = minCellPx > 6 ? ' (8-color target ' + minCellPx + ' px)' : '';
+      canvasMeta.textContent = 'Canvas: ' + optimalW + ' x ' + optimalH + ' px, ' + cellPx.toFixed(1) + ' px/cell' + targetText;
       var changed = false;
       canvases.forEach(function(nextCanvas) {
-        if (nextCanvas.width !== optimal || nextCanvas.height !== optimal) {
-          nextCanvas.width = optimal;
-          nextCanvas.height = optimal;
+        if (nextCanvas.width !== optimalW || nextCanvas.height !== optimalH) {
+          nextCanvas.width = optimalW;
+          nextCanvas.height = optimalH;
+          nextCanvas.style.width = optimalW + 'px';
+          nextCanvas.style.height = optimalH + 'px';
           var nextCtx = contexts[canvases.indexOf(nextCanvas)];
           if (nextCtx) nextCtx.imageSmoothingEnabled = false;
           changed = true;
@@ -492,11 +517,53 @@
     }
 
     function drawAprilTagMarker(ctx, x, y, id, cell) {
+      var img = markerImages[id];
+      if (img && img.complete && img.naturalWidth) {
+        ctx.save();
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(img, x * cell, y * cell, MARKER_CELLS * cell, MARKER_CELLS * cell);
+        ctx.restore();
+        return;
+      }
+      if (id >= APRILTAG_CODES.length) {
+        ctx.fillStyle = '#05060a';
+        ctx.fillRect(x * cell, y * cell, MARKER_CELLS * cell, MARKER_CELLS * cell);
+        ctx.strokeStyle = '#ffd166';
+        ctx.lineWidth = Math.max(1, cell);
+        ctx.strokeRect(x * cell, y * cell, MARKER_CELLS * cell, MARKER_CELLS * cell);
+        return;
+      }
       var pattern = getAprilTagPattern(id);
       ctx.save();
       ctx.imageSmoothingEnabled = false;
       ctx.drawImage(pattern, x * cell, y * cell, MARKER_CELLS * cell, MARKER_CELLS * cell);
       ctx.restore();
+    }
+
+    function preloadAprilTagImages() {
+      for (var id = 0; id < REQUIRED_MARKER_IMAGES; id++) {
+        var img = new Image();
+        img.onload = function() {
+          markerImagesLoaded++;
+          if (markerImagesLoaded >= REQUIRED_MARKER_IMAGES) {
+            markersReady = true;
+            if (meta) {
+              playBtn.disabled = false;
+              pauseBtn.disabled = false;
+              if (pendingAutoplay) {
+                pendingAutoplay = false;
+                startPlayback();
+              }
+            }
+          }
+          drawFrames();
+        };
+        img.onerror = function() {
+          encodeMeta.textContent = 'Failed to load local AprilTag marker images. Restart server and refresh encoder.';
+        };
+        img.src = '../vendor/apriltag3/tag36h11/tag36_11_' + String(id).padStart(5, '0') + '.png?v=16tag';
+        markerImages[id] = img;
+      }
     }
 
     function getAprilTagPattern(id) {
@@ -524,22 +591,25 @@
     }
 
     function drawSyncLines(ctx, cell) {
-      for (var i = DATA_OFFSET; i < DATA_OFFSET + DATA_CELLS; i++) {
+      for (var i = DATA_OFFSET_X; i < DATA_OFFSET_X + DATA_COLS; i++) {
         ctx.fillStyle = (i & 1) ? '#f8fbff' : '#08090d';
-        ctx.fillRect(i * cell, (DATA_OFFSET - 1) * cell, Math.ceil(cell), Math.ceil(cell));
-        ctx.fillRect(i * cell, (TOTAL_CELLS - DATA_OFFSET) * cell, Math.ceil(cell), Math.ceil(cell));
-        ctx.fillRect((DATA_OFFSET - 1) * cell, i * cell, Math.ceil(cell), Math.ceil(cell));
-        ctx.fillRect((TOTAL_CELLS - DATA_OFFSET) * cell, i * cell, Math.ceil(cell), Math.ceil(cell));
+        ctx.fillRect(i * cell, (DATA_OFFSET_Y - 1) * cell, Math.ceil(cell), Math.ceil(cell));
+        ctx.fillRect(i * cell, (DATA_OFFSET_Y + DATA_ROWS) * cell, Math.ceil(cell), Math.ceil(cell));
+      }
+      for (var j = DATA_OFFSET_Y; j < DATA_OFFSET_Y + DATA_ROWS; j++) {
+        ctx.fillStyle = (j & 1) ? '#f8fbff' : '#08090d';
+        ctx.fillRect((DATA_OFFSET_X - 1) * cell, j * cell, Math.ceil(cell), Math.ceil(cell));
+        ctx.fillRect((DATA_OFFSET_X + DATA_COLS) * cell, j * cell, Math.ceil(cell), Math.ceil(cell));
       }
     }
 
     function drawColorCalibration(ctx, cell) {
       var topRow = 3;
-      var bottomRow = TOTAL_CELLS - 4;
-      for (var i = 0; i < DATA_CELLS; i++) {
+      var bottomRow = TOTAL_ROWS - 4;
+      for (var i = 0; i < DATA_COLS; i++) {
         ctx.fillStyle = COLORS[i % COLORS.length];
-        ctx.fillRect((DATA_OFFSET + i) * cell, topRow * cell, Math.ceil(cell), Math.ceil(cell));
-        ctx.fillRect((DATA_OFFSET + i) * cell, bottomRow * cell, Math.ceil(cell), Math.ceil(cell));
+        ctx.fillRect((DATA_OFFSET_X + i) * cell, topRow * cell, Math.ceil(cell), Math.ceil(cell));
+        ctx.fillRect((DATA_OFFSET_X + i) * cell, bottomRow * cell, Math.ceil(cell), Math.ceil(cell));
       }
     }
 

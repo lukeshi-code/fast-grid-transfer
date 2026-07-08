@@ -358,14 +358,16 @@
     var overlay = document.getElementById('overlay');
     var overlayCtx = overlay.getContext('2d');
 
-    var WORKER_COUNT = 4;
+    var WORKER_COUNT = 2;
     var RELOCATE_EVERY = 8;
     var workers = [];
     var pendingWorkerReplies = 0;
     var batchAccepted = 0;
+    var batchRoiBox = null;
+    var batchRoiSlots = [];
     var PAYLOAD_BYTES = 3408;
-    var EXPECTED_GRIDS = 4;
-    var ROI_TRACKED_GRIDS = 4;
+    var EXPECTED_GRIDS = 2;
+    var ROI_TRACKED_GRIDS = 2;
     var stream = null;
     var canvas = document.createElement('canvas');
     var ctx = canvas.getContext('2d', { willReadFrequently: true });
@@ -454,27 +456,25 @@
       if (msg.type === 'frames') {
         lastDebug = msg.debug || {};
         lastDebug.worker = workerIndex;
-        var batchBox = null;
-        var batchSlots = [];
         for (var i = 0; i < msg.frames.length; i++) {
           handleAcceptedFrame(msg.frames[i], false);
           batchAccepted++;
-          batchBox = unionBbox(batchBox, msg.frames[i].bbox);
-          if (msg.frames[i].gridSlot != null) batchSlots.push(msg.frames[i].gridSlot);
+          batchRoiBox = unionBbox(batchRoiBox, msg.frames[i].bbox);
+          if (msg.frames[i].gridSlot != null && batchRoiSlots.indexOf(msg.frames[i].gridSlot) === -1) batchRoiSlots.push(msg.frames[i].gridSlot);
         }
-        if (batchBox) updateRoiFromWorker(batchBox, false, batchSlots);
         drawOverlay();
       } else if (msg.type === 'frame') {
         lastDebug = msg.debug || {};
         lastDebug.worker = workerIndex;
-        handleAcceptedFrame(msg.frame);
+        handleAcceptedFrame(msg.frame, false);
         batchAccepted++;
+        batchRoiBox = unionBbox(batchRoiBox, msg.frame.bbox);
+        if (msg.frame.gridSlot != null && batchRoiSlots.indexOf(msg.frame.gridSlot) === -1) batchRoiSlots.push(msg.frame.gridSlot);
         drawOverlay();
       } else if (msg.type === 'miss') {
         lastDebug = msg.debug || {};
         lastDebug.worker = workerIndex;
-        if (msg.bbox) updateRoiFromWorker(msg.bbox, true);
-        handleScanMiss(msg.reason || 'unknown');
+        recordScanMiss(msg.reason || 'unknown');
         markFailedFrameFromDebug(lastDebug);
         drawOverlay();
       } else if (msg.type === 'error') {
@@ -490,7 +490,13 @@
       pendingWorkerReplies = Math.max(0, pendingWorkerReplies - 1);
       if (pendingWorkerReplies > 0) return;
       busy = false;
-      if (!batchAccepted && roi) handleScanMiss('batch');
+      if (batchRoiSlots.length >= 2 && batchRoiBox) {
+        updateRoiFromWorker(batchRoiBox, false, batchRoiSlots);
+      } else if (batchAccepted > 0) {
+        handleScanMiss('partial-grid');
+      } else if (roi) {
+        handleScanMiss('batch');
+      }
       scheduleScan();
     }
 
@@ -561,6 +567,8 @@
       busy = false;
       pendingWorkerReplies = 0;
       batchAccepted = 0;
+      batchRoiBox = null;
+      batchRoiSlots = [];
       if (stream) {
         stream.getTracks().forEach(function(track) { track.stop(); });
         stream = null;
@@ -656,6 +664,8 @@
       drawOverlay();
       busy = true;
       batchAccepted = 0;
+      batchRoiBox = null;
+      batchRoiSlots = [];
       pendingWorkerReplies = workers.length;
       scanCount++;
       var shouldRelocate = !roi || (scanCount % RELOCATE_EVERY === 1);
@@ -680,6 +690,7 @@
 
     function updateRoiFromWorker(bbox, weak, slots) {
       if (!bbox || !pendingScan) return;
+      if (ROI_TRACKED_GRIDS >= 2 && (!slots || slots.length < 2)) return;
       var next = {
         x: pendingScan.sx + bbox.x / pendingScan.scale,
         y: pendingScan.sy + bbox.y / pendingScan.scale,
@@ -688,7 +699,7 @@
       };
       lastDetectedBox = next;
       lastBoxConfidence = bbox.confidence || 0;
-      next = expandParallelGridRoi(next, slots);
+      next = completeGridRoiFromSlots(next, slots);
       if (ROI_TRACKED_GRIDS === 2 && !weak) {
         roi = next;
         roiMisses = 0;
@@ -708,25 +719,34 @@
       roiFallbackLevel = 0;
     }
 
-    function expandParallelGridRoi(box, slots) {
-      if (ROI_TRACKED_GRIDS < 2 || !box) return box;
-      var aspect = box.width / Math.max(1, box.height);
-      if (ROI_TRACKED_GRIDS === 2 && aspect >= 1.35) return normalizeWideRoi(box);
-      if (ROI_TRACKED_GRIDS === 4 && aspect >= 0.82 && aspect <= 1.22 && slots && slots.length > 1) return normalizeGridRoi(box, 4);
-
-      var firstSlot = slots && slots.length ? slots[0] : 0;
-      var columns = ROI_TRACKED_GRIDS === 4 ? 2 : ROI_TRACKED_GRIDS;
-      var rows = ROI_TRACKED_GRIDS === 4 ? 2 : 1;
-      var col = firstSlot % columns;
-      var row = Math.floor(firstSlot / columns);
+    function completeGridRoiFromSlots(box, slots) {
+      if (!box || !slots || slots.length < 2) return box;
+      if (ROI_TRACKED_GRIDS === 2) return normalizeTallRoi(box);
+      if (ROI_TRACKED_GRIDS !== 4) return box;
+      var minCol = 1;
+      var maxCol = 0;
+      var minRow = 1;
+      var maxRow = 0;
+      slots.forEach(function(slot) {
+        var col = slot % 2;
+        var row = Math.floor(slot / 2);
+        minCol = Math.min(minCol, col);
+        maxCol = Math.max(maxCol, col);
+        minRow = Math.min(minRow, row);
+        maxRow = Math.max(maxRow, row);
+      });
+      var seenCols = Math.max(1, maxCol - minCol + 1);
+      var seenRows = Math.max(1, maxRow - minRow + 1);
+      var gridW = box.width / seenCols;
+      var gridH = box.height / seenRows;
       var marginX = box.width * 0.12;
       var marginY = box.height * 0.12;
       var videoW = video.videoWidth || (pendingScan ? pendingScan.sw : 0) || (box.x + box.width);
       var videoH = video.videoHeight || (pendingScan ? pendingScan.sh : 0) || (box.y + box.height);
-      var x = box.x - box.width * col - marginX;
-      var y = box.y - box.height * row - marginY;
-      var width = box.width * columns + marginX * 2;
-      var height = box.height * rows + marginY * 2;
+      var x = box.x - gridW * minCol - marginX;
+      var y = box.y - gridH * minRow - marginY;
+      var width = gridW * 2 + marginX * 2;
+      var height = gridH * 2 + marginY * 2;
       var clampedX = Math.max(0, x);
       var clampedY = Math.max(0, y);
       return {
@@ -737,11 +757,11 @@
       };
     }
 
-    function normalizeGridRoi(box, gridCount) {
+    function normalizeTallRoi(box) {
       var videoW = video.videoWidth || (pendingScan ? pendingScan.sw : 0) || (box.x + box.width);
       var videoH = video.videoHeight || (pendingScan ? pendingScan.sh : 0) || (box.y + box.height);
-      var marginX = box.width * (gridCount === 4 ? 0.05 : 0.06);
-      var marginY = box.height * (gridCount === 4 ? 0.05 : 0.10);
+      var marginX = box.width * 0.04;
+      var marginY = box.height * 0.04;
       var x = Math.max(0, box.x - marginX);
       var y = Math.max(0, box.y - marginY);
       return {
@@ -752,24 +772,13 @@
       };
     }
 
-    function normalizeWideRoi(box) {
-      var videoW = video.videoWidth || (pendingScan ? pendingScan.sw : 0) || (box.x + box.width);
-      var videoH = video.videoHeight || (pendingScan ? pendingScan.sh : 0) || (box.y + box.height);
-      var marginX = box.width * 0.06;
-      var marginY = box.height * 0.10;
-      var x = Math.max(0, box.x - marginX);
-      var y = Math.max(0, box.y - marginY);
-      return {
-        x: x,
-        y: y,
-        width: Math.max(1, Math.min(videoW - x, box.width + marginX * 2)),
-        height: Math.max(1, Math.min(videoH - y, box.height + marginY * 2))
-      };
+    function recordScanMiss(reason) {
+      missReason = reason || missReason;
+      if (reason) missStats[reason] = (missStats[reason] || 0) + 1;
     }
 
     function handleScanMiss(reason) {
-      missReason = reason || missReason;
-      if (reason) missStats[reason] = (missStats[reason] || 0) + 1;
+      recordScanMiss(reason);
       if (!roi) return;
       roiMisses++;
       if (roiMisses === 3 || roiMisses === 6 || roiMisses === 9) {

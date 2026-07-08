@@ -1,19 +1,22 @@
 importScripts('../vendor/apriltag3/apriltag_wasm.js', '../vendor/apriltag3/apriltag-wrapper.js');
 
-var TOTAL_CELLS = 100;
-var DATA_OFFSET = 18;
-var DATA_CELLS = 64;
+var TOTAL_COLS = 236;
+var TOTAL_ROWS = 86;
+var DATA_OFFSET_X = 18;
+var DATA_OFFSET_Y = 18;
+var DATA_COLS = 200;
+var DATA_ROWS = 50;
 var HEADER_BYTES = 48;
-var FRAME_BYTES_2 = DATA_CELLS * DATA_CELLS * 2 / 8;
-var FRAME_BYTES_3 = DATA_CELLS * DATA_CELLS * 3 / 8;
-var PROTOCOL_VERSION = 7;
+var FRAME_BYTES_2 = DATA_COLS * DATA_ROWS * 2 / 8;
+var FRAME_BYTES_3 = DATA_COLS * DATA_ROWS * 3 / 8;
+var PROTOCOL_VERSION = 8;
 var TAG_BASES = [0, 4];
 var CACHE_MAX_AGE = 8;
 var TAG_CENTER = {
   tl: [9, 9],
-  tr: [91, 9],
-  bl: [9, 91],
-  br: [91, 91]
+  tr: [TOTAL_COLS - 9, 9],
+  bl: [9, TOTAL_ROWS - 9],
+  br: [TOTAL_COLS - 9, TOTAL_ROWS - 9]
 };
 var PALETTE = [
   [8, 9, 13],
@@ -41,8 +44,8 @@ self.onmessage = async function(event) {
     lastMissReason = 'unknown';
     lastDebugBox = null;
     lastDebug = {
-      protocol: 'v7',
-      geometry: TOTAL_CELLS + 'x' + TOTAL_CELLS + ' / data ' + DATA_CELLS + 'x' + DATA_CELLS,
+      protocol: 'v8',
+      geometry: TOTAL_COLS + 'x' + TOTAL_ROWS + ' / data ' + DATA_COLS + 'x' + DATA_ROWS,
       image: msg.image ? msg.image.width + 'x' + msg.image.height : '',
       stage: 'start',
       apriltagFound: 0,
@@ -118,7 +121,7 @@ function decodeGridFromHomography(image, homography, slot, marks, fromCache) {
     lastDebug.bbox = formatBox(gridBox);
     lastDebug.dataBox = formatBox(dataBox);
     lastDebug.gridSlot = slot;
-    lastDebug.cellPx = (Math.max(dataBox.width, dataBox.height) / DATA_CELLS).toFixed(2);
+    lastDebug.cellPx = (Math.max(dataBox.width / DATA_COLS, dataBox.height / DATA_ROWS)).toFixed(2);
   }
 
   if (lastDebug) lastDebug.stage = 'palette';
@@ -130,16 +133,16 @@ function decodeGridFromHomography(image, homography, slot, marks, fromCache) {
   var frame3 = new Uint8Array(FRAME_BYTES_3);
   var lut4 = createPaletteLut(palette, 4);
   var lut8 = createPaletteLut(palette, 8);
-  var sampleRadius = Math.max(1, Math.max(dataBox.width, dataBox.height) / DATA_CELLS * 0.22);
+  var sampleRadius = Math.max(1, Math.max(dataBox.width / DATA_COLS, dataBox.height / DATA_ROWS) * 0.22);
 
   if (lastDebug) lastDebug.stage = 'sample';
-  for (var gy = 0; gy < DATA_CELLS; gy++) {
-    for (var gx = 0; gx < DATA_CELLS; gx++) {
-      var point = project(homography, DATA_OFFSET + gx + 0.5, DATA_OFFSET + gy + 0.5);
+  for (var gy = 0; gy < DATA_ROWS; gy++) {
+    for (var gx = 0; gx < DATA_COLS; gx++) {
+      var point = project(homography, DATA_OFFSET_X + gx + 0.5, DATA_OFFSET_Y + gy + 0.5);
       if (!point || point.x < 0 || point.x >= w || point.y < 0 || point.y >= h) return miss('bounds');
       var rgb = sampleRgb(data, w, h, point.x, point.y, sampleRadius);
-      setBits(frame2, gy * DATA_CELLS + gx, nearestPaletteLut(rgb, lut4), 2);
-      setBits(frame3, gy * DATA_CELLS + gx, nearestPaletteLut(rgb, lut8), 3);
+      setBits(frame2, gy * DATA_COLS + gx, nearestPaletteLut(rgb, lut4), 2);
+      setBits(frame3, gy * DATA_COLS + gx, nearestPaletteLut(rgb, lut8), 3);
     }
   }
 
@@ -193,7 +196,9 @@ async function findAprilTagMarkerGroups(image) {
     if (missingForGroup.length) missing.push('base' + nextBase + ':' + missingForGroup.join('/'));
     candidates = candidates.concat(buildGroupCandidates(found, nextBase));
   }
-  var groups = assignSlots(selectMarkerGroups(candidates));
+  var groups = selectMarkerGroups(candidates).map(function(group) {
+    return { slot: group.slot, marks: group.marks };
+  });
   if (lastDebug) {
     lastDebug.apriltagFound = list.length;
     lastDebug.apriltagIds = ids.join(',');
@@ -219,6 +224,7 @@ function buildGroupCandidates(found, base) {
           if (score < Infinity) {
             out.push({
               base: base,
+              slot: base / 4,
               marks: marks,
               score: score,
               keys: [found.tl[a], found.tr[b], found.bl[c], found.br[d]].map(markerKey),
@@ -257,18 +263,9 @@ function selectMarkerGroups(candidates) {
     if (conflict) continue;
     selected.push(candidate);
     candidate.keys.forEach(function(key) { used[key] = true; });
-    if (selected.length >= 4) break;
+    if (selected.length >= TAG_BASES.length) break;
   }
   return selected;
-}
-
-function assignSlots(groups) {
-  groups.sort(function(a, b) { return a.cy === b.cy ? a.cx - b.cx : a.cy - b.cy; });
-  var top = groups.slice(0, 2).sort(function(a, b) { return a.cx - b.cx; });
-  var bottom = groups.slice(2, 4).sort(function(a, b) { return a.cx - b.cx; });
-  return top.concat(bottom).map(function(group, slot) {
-    return { slot: slot, marks: group.marks };
-  });
 }
 
 function markerKey(marker) {
@@ -353,16 +350,16 @@ function markerBounds(marks) {
       maxY = Math.max(maxY, c.y);
     }
   }
-  var cell = Math.max(2, Math.max(maxX - minX, maxY - minY) / TOTAL_CELLS);
+  var cell = Math.max(2, Math.max((maxX - minX) / TOTAL_COLS, (maxY - minY) / TOTAL_ROWS));
   return { minX: minX, minY: minY, maxX: maxX, maxY: maxY, cell: cell };
 }
 
 function projectedDataBox(h) {
-  return projectedBox(h, DATA_OFFSET, DATA_OFFSET, DATA_CELLS, DATA_CELLS, 0.9);
+  return projectedBox(h, DATA_OFFSET_X, DATA_OFFSET_Y, DATA_COLS, DATA_ROWS, 0.9);
 }
 
 function projectedGridBox(h) {
-  return projectedBox(h, 0, 0, TOTAL_CELLS, TOTAL_CELLS, 0.92);
+  return projectedBox(h, 0, 0, TOTAL_COLS, TOTAL_ROWS, 0.92);
 }
 
 function projectedBox(h, x, y, width, height, confidence) {
@@ -381,11 +378,11 @@ function projectedBox(h, x, y, width, height, confidence) {
 
 function calibratePalette(data, w, h, homography) {
   var sums = PALETTE.map(function() { return [0, 0, 0, 0]; });
-  var rows = [3.5, TOTAL_CELLS - 3.5];
+  var rows = [3.5, TOTAL_ROWS - 3.5];
   for (var r = 0; r < rows.length; r++) {
-    for (var i = 0; i < DATA_CELLS; i++) {
+    for (var i = 0; i < DATA_COLS; i++) {
       var colorIndex = i % 8;
-      var p = project(homography, DATA_OFFSET + i + 0.5, rows[r]);
+      var p = project(homography, DATA_OFFSET_X + i + 0.5, rows[r]);
       if (!p) continue;
       var rgb = sampleRgb(data, w, h, p.x, p.y, 1.2);
       sums[colorIndex][0] += rgb[0];
@@ -411,8 +408,8 @@ function parseFrame(frame, bits, homography) {
   var mtu = readU16(frame, 28);
   var repairPacketsPerBlock = readU16(frame, 30);
   var cycleSymbols = readU32(frame, 32);
-  var dataCells = readU16(frame, 36);
-  var headerBytes = readU16(frame, 38);
+  var dataCols = readU16(frame, 36);
+  var dataRows = readU16(frame, 38);
   var symbolIndex = readU32(frame, 8);
   var packetIndex = readU32(frame, 40);
   var expectedPayload = (bits === 3 ? FRAME_BYTES_3 : FRAME_BYTES_2) - HEADER_BYTES;
@@ -425,7 +422,7 @@ function parseFrame(frame, bits, homography) {
   }
   if (sourceSymbols < 1 || transferLength < 1 || packetLen < 5 || packetLen > expectedPayload) return { frame: null, reason: 'header packet=' + packetLen + ' src=' + sourceSymbols + ' len=' + transferLength };
   if (payloadBytes !== expectedPayload || mtu + 4 > payloadBytes) return { frame: null, reason: 'payload payload=' + payloadBytes + ' mtu=' + mtu + ' expected=' + expectedPayload };
-  if (dataCells !== DATA_CELLS || headerBytes !== HEADER_BYTES) return { frame: null, reason: 'geometry data=' + dataCells + ' header=' + headerBytes };
+  if (dataCols !== DATA_COLS || dataRows !== DATA_ROWS) return { frame: null, reason: 'geometry data=' + dataCols + 'x' + dataRows };
   var packet = frame.slice(HEADER_BYTES, HEADER_BYTES + packetLen);
   var actualChecksum = checksum32(packet);
   if (actualChecksum !== checksum) return { frame: null, reason: 'checksum want=' + checksum + ' got=' + actualChecksum };
