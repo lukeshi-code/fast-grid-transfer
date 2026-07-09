@@ -172,7 +172,7 @@ async function buildFrame(symbolIndex) {
   writeU32(frame, 12, sourceSymbols >>> 0);
   writeU32(frame, 16, streamLength >>> 0);
   writeU16(frame, 20, packet.length);
-  writeU32(frame, 22, checksum32(packet));
+  writeU32(frame, 22, 0);
   writeU16(frame, 26, payloadBytes);
   writeU16(frame, 28, rqMtu);
   writeU16(frame, 30, repairPacketsPerBlock);
@@ -184,6 +184,7 @@ async function buildFrame(symbolIndex) {
   writeU32(frame, 48, transferIdLo);
   writeU32(frame, 52, transferIdHi);
   frame.set(packet, HEADER_BYTES);
+  writeU32(frame, 22, crc32cFrame(frame, HEADER_BYTES + packet.length));
 
   self.postMessage({
     type: 'frame',
@@ -374,11 +375,22 @@ function writeU32(buf, offset, value) {
   buf[offset + 3] = (value >>> 24) & 255;
 }
 
-function checksum32(bytes) {
-  var h = 2166136261 >>> 0;
-  for (var i = 0; i < bytes.length; i++) {
-    h ^= bytes[i];
-    h = Math.imul(h, 16777619) >>> 0;
+var CRC32C_TABLE = (function() {
+  var table = new Uint32Array(256);
+  for (var i = 0; i < 256; i++) {
+    var crc = i;
+    for (var j = 0; j < 8; j++) crc = (crc & 1) ? (0x82f63b78 ^ (crc >>> 1)) : (crc >>> 1);
+    table[i] = crc >>> 0;
   }
-  return h >>> 0;
+  return table;
+})();
+
+function crc32cFrame(bytes, length) {
+  var crc = 0xffffffff;
+  var end = Math.min(bytes.length, length);
+  for (var i = 0; i < end; i++) {
+    var value = (i >= 22 && i < 26) ? 0 : bytes[i];
+    crc = CRC32C_TABLE[(crc ^ value) & 255] ^ (crc >>> 8);
+  }
+  return (crc ^ 0xffffffff) >>> 0;
 }
