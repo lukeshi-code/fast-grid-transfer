@@ -1,23 +1,28 @@
-importScripts('../vendor/apriltag3/apriltag_wasm.js', '../vendor/apriltag3/apriltag-wrapper.js');
+importScripts('../shared/protocol.js', '../vendor/apriltag3/apriltag_wasm.js', '../vendor/apriltag3/apriltag-wrapper.js');
 
-var TOTAL_COLS = 236;
-var TOTAL_ROWS = 86;
-var DATA_OFFSET_X = 18;
-var DATA_OFFSET_Y = 18;
-var DATA_COLS = 200;
-var DATA_ROWS = 50;
-var HEADER_BYTES = 48;
-var FRAME_BYTES_2 = DATA_COLS * DATA_ROWS * 2 / 8;
-var FRAME_BYTES_3 = DATA_COLS * DATA_ROWS * 3 / 8;
-var PROTOCOL_VERSION = 8;
-var TAG_BASES = [0, 4];
-var CACHE_MAX_AGE = 8;
+var P = self.FastGridProtocol;
+var TOTAL_COLS = P.totalCols;
+var TOTAL_ROWS = P.totalRows;
+var DATA_OFFSET_X = P.dataOffsetX;
+var DATA_OFFSET_Y = P.dataOffsetY;
+var DATA_COLS = P.dataCols;
+var DATA_ROWS = P.dataRows;
+var DATA_CELLS = DATA_COLS * DATA_ROWS;
+var HEADER_BYTES = P.headerBytes;
+var FRAME_BYTES_2 = P.frameBytes2;
+var FRAME_BYTES_3 = P.frameBytes3;
+var PROTOCOL_VERSION = P.protocolVersion;
+var TAG_BASES = P.tagBases.slice();
+var CACHE_MAX_AGE = P.cacheMaxAge;
+var EXPECTED_GRIDS = P.expectedGrids;
+
 var TAG_CENTER = {
   tl: [9, 9],
   tr: [TOTAL_COLS - 9, 9],
   bl: [9, TOTAL_ROWS - 9],
   br: [TOTAL_COLS - 9, TOTAL_ROWS - 9]
 };
+
 var PALETTE = [
   [8, 9, 13],
   [248, 251, 255],
@@ -28,6 +33,7 @@ var PALETTE = [
   [156, 163, 175],
   [51, 65, 85]
 ];
+
 var detector = null;
 var detectorReady = null;
 var lastMissReason = 'unknown';
@@ -35,6 +41,17 @@ var lastDebugBox = null;
 var lastDebug = null;
 var homographyCache = {};
 var workerFrameSeq = 0;
+
+var grayScratch = null;
+var grayScratchWidth = 0;
+var grayScratchHeight = 0;
+var sampleKeyScratch = new Uint16Array(DATA_CELLS);
+var frame2Scratch = new Uint8Array(FRAME_BYTES_2);
+var frame3Scratch = new Uint8Array(FRAME_BYTES_3);
+var lutCache = {
+  4: { key: '', lut: null },
+  8: { key: '', lut: null }
+};
 
 self.onmessage = async function(event) {
   var msg = event.data;
@@ -44,27 +61,30 @@ self.onmessage = async function(event) {
     lastMissReason = 'unknown';
     lastDebugBox = null;
     lastDebug = {
-      protocol: 'v8',
+      protocol: 'v' + PROTOCOL_VERSION,
       geometry: TOTAL_COLS + 'x' + TOTAL_ROWS + ' / data ' + DATA_COLS + 'x' + DATA_ROWS,
       image: msg.image ? msg.image.width + 'x' + msg.image.height : '',
       stage: 'start',
       apriltagFound: 0,
       apriltagIds: '',
       missingMarkers: '',
+      markerGroups: 0,
       parse2: '',
       parse3: '',
-      cache: ''
+      cache: '',
+      fastPath: ''
     };
-    var t0 = Date.now();
-    var decoded = await decodeImage(msg.image, msg.slotFilter, msg.relocate === true);
-    if (lastDebug) lastDebug.workerMs = Date.now() - t0;
+    var t0 = performance.now();
+    var decoded = await decodeImage(msg.image, msg.relocate === true);
+    if (lastDebug) lastDebug.workerMs = +(performance.now() - t0).toFixed(2);
     if (decoded && decoded.length) {
       var transfers = decoded.map(function(frame) { return frame.packet; });
-      self.postMessage({ type: 'frames', frames: decoded, debug: lastDebug }, transfers);
+      self.postMessage({ type: 'frames', frames: decoded, debug: lastDebug, frameSeq: workerFrameSeq }, transfers);
+    } else {
+      self.postMessage({ type: 'miss', reason: lastMissReason, bbox: lastDebugBox, debug: lastDebug, frameSeq: workerFrameSeq });
     }
-    else self.postMessage({ type: 'miss', reason: lastMissReason, bbox: lastDebugBox, debug: lastDebug });
   } catch (err) {
-    self.postMessage({ type: 'error', message: err.message || String(err) });
+    self.postMessage({ type: 'error', message: err && err.message ? err.message : String(err), frameSeq: workerFrameSeq });
   }
 };
 
@@ -77,24 +97,22 @@ async function getDetector() {
   return detector;
 }
 
-async function decodeImage(image, slotFilter, relocate) {
-  if (slotFilter != null && !relocate) {
-    var cached = homographyCache[slotFilter];
-    if (cached && workerFrameSeq - cached.frameSeq <= CACHE_MAX_AGE) {
-      var cachedFrame = decodeGridFromHomography(image, cached.homography, slotFilter, null, true);
-      if (cachedFrame) {
-        if (lastDebug) lastDebug.cache = 'hit slot ' + slotFilter;
-        return [cachedFrame];
-      }
-      if (lastDebug) lastDebug.cache = 'miss slot ' + slotFilter;
+async function decodeImage(image, relocate) {
+  if (!relocate) {
+    var cachedFrames = tryDecodeAllCached(image);
+    if (cachedFrames && cachedFrames.length === EXPECTED_GRIDS) {
+      if (lastDebug) lastDebug.cache = 'all-hit';
+      return cachedFrames;
     }
+    if (lastDebug) lastDebug.cache = cachedFrames && cachedFrames.length ? 'partial-fallback' : 'miss';
   }
+
   if (lastDebug) lastDebug.stage = 'apriltag';
   var groups = await findAprilTagMarkerGroups(image);
   if (!groups.length) return miss('apriltag');
+
   var frames = [];
   for (var i = 0; i < groups.length; i++) {
-    if (slotFilter != null && groups[i].slot !== slotFilter) continue;
     var frame = decodeGrid(image, groups[i].marks, groups[i].slot);
     if (frame) frames.push(frame);
   }
@@ -102,67 +120,155 @@ async function decodeImage(image, slotFilter, relocate) {
   return miss('magic');
 }
 
+function tryDecodeAllCached(image) {
+  var frames = [];
+  for (var slot = 0; slot < EXPECTED_GRIDS; slot++) {
+    var cached = homographyCache[slot];
+    if (!cached || workerFrameSeq - cached.frameSeq > CACHE_MAX_AGE) return null;
+    var frame = decodeGridFromHomography(image, cached.homography, slot, null, true, cached);
+    if (!frame) return frames;
+    frames.push(frame);
+  }
+  return frames;
+}
+
 function decodeGrid(image, marks, slot) {
   if (lastDebug) lastDebug.stage = 'homography';
   var homography = buildGridHomography(marks);
   if (!homography) return miss('homography');
-  return decodeGridFromHomography(image, homography, slot, marks, false);
+  return decodeGridFromHomography(image, homography, slot, marks, false, null);
 }
 
-function decodeGridFromHomography(image, homography, slot, marks, fromCache) {
+function decodeGridFromHomography(image, homography, slot, marks, fromCache, cacheEntry) {
   var data = image.data;
   var w = image.width;
   var h = image.height;
-
   var dataBox = projectedDataBox(homography);
   var gridBox = projectedGridBox(homography);
   lastDebugBox = { x: gridBox.x, y: gridBox.y, width: gridBox.width, height: gridBox.height, confidence: gridBox.confidence };
+
   if (lastDebug) {
     lastDebug.bbox = formatBox(gridBox);
     lastDebug.dataBox = formatBox(dataBox);
     lastDebug.gridSlot = slot;
-    lastDebug.cellPx = (Math.max(dataBox.width / DATA_COLS, dataBox.height / DATA_ROWS)).toFixed(2);
+    lastDebug.cellPx = Math.max(dataBox.width / DATA_COLS, dataBox.height / DATA_ROWS).toFixed(2);
+  }
+
+  var sampleMap = cacheEntry && cacheEntry.sampleMap;
+  if (!sampleMap) {
+    sampleMap = buildSampleMap(homography);
+    if (!sampleMap) return miss('homography-map');
   }
 
   if (lastDebug) lastDebug.stage = 'palette';
   var palette = calibratePalette(data, w, h, homography);
-  if (lastDebug) lastDebug.palette = palette.map(function(rgb) {
-    return rgb.map(function(v) { return Math.round(v); }).join(',');
-  }).join(' | ');
-  var frame2 = new Uint8Array(FRAME_BYTES_2);
-  var frame3 = new Uint8Array(FRAME_BYTES_3);
-  var lut4 = createPaletteLut(palette, 4);
-  var lut8 = createPaletteLut(palette, 8);
-  var sampleRadius = Math.max(1, Math.max(dataBox.width / DATA_COLS, dataBox.height / DATA_ROWS) * 0.22);
+  if (lastDebug) {
+    lastDebug.palette = palette.map(function(rgb) {
+      return rgb.map(function(v) { return Math.round(v); }).join(',');
+    }).join(' | ');
+  }
 
+  var sampleRadius = Math.max(1, Math.max(dataBox.width / DATA_COLS, dataBox.height / DATA_ROWS) * 0.22);
   if (lastDebug) lastDebug.stage = 'sample';
-  for (var gy = 0; gy < DATA_ROWS; gy++) {
-    for (var gx = 0; gx < DATA_COLS; gx++) {
-      var point = project(homography, DATA_OFFSET_X + gx + 0.5, DATA_OFFSET_Y + gy + 0.5);
-      if (!point || point.x < 0 || point.x >= w || point.y < 0 || point.y >= h) return miss('bounds');
-      var rgb = sampleRgb(data, w, h, point.x, point.y, sampleRadius);
-      setBits(frame2, gy * DATA_COLS + gx, nearestPaletteLut(rgb, lut4), 2);
-      setBits(frame3, gy * DATA_COLS + gx, nearestPaletteLut(rgb, lut8), 3);
+  if (!sampleCellsToKeys(data, w, h, sampleMap, sampleRadius)) {
+    if (fromCache) delete homographyCache[slot];
+    return miss('bounds');
+  }
+
+  var preferredBits = cacheEntry && cacheEntry.modeBits;
+  var decoded = null;
+  if (preferredBits === 2 || preferredBits === 3) {
+    if (lastDebug) lastDebug.fastPath = preferredBits + '-bit';
+    decoded = decodeSampleKeys(palette, preferredBits, homography);
+    if (decoded) {
+      saveCache(slot, homography, sampleMap, preferredBits);
+      return decoded;
+    }
+    if (lastDebug) lastDebug.fastPath += ' fallback';
+    decoded = decodeSampleKeys(palette, preferredBits === 2 ? 3 : 2, homography);
+    if (decoded) {
+      saveCache(slot, homography, sampleMap, decoded.colorBits);
+      return decoded;
+    }
+  } else {
+    decoded = decodeSampleKeys(palette, 2, homography);
+    if (!decoded) decoded = decodeSampleKeys(palette, 3, homography);
+    if (decoded) {
+      saveCache(slot, homography, sampleMap, decoded.colorBits);
+      return decoded;
     }
   }
 
-  if (lastDebug) lastDebug.stage = 'parse';
-  var parsed2 = parseFrame(frame2, 2, homography);
-  var decoded2 = parsed2.frame;
-  if (lastDebug) lastDebug.parse2 = parsed2.reason;
-  if (decoded2) {
-    homographyCache[slot] = { homography: homography.slice(), frameSeq: workerFrameSeq };
-    return decoded2;
-  }
-  var parsed3 = parseFrame(frame3, 3, homography);
-  var decoded3 = parsed3.frame;
-  if (lastDebug) lastDebug.parse3 = parsed3.reason;
-  if (decoded3) {
-    homographyCache[slot] = { homography: homography.slice(), frameSeq: workerFrameSeq };
-    return decoded3;
-  }
   if (fromCache) delete homographyCache[slot];
   return null;
+}
+
+function saveCache(slot, homography, sampleMap, modeBits) {
+  homographyCache[slot] = {
+    homography: homography.slice(),
+    sampleMap: sampleMap,
+    frameSeq: workerFrameSeq,
+    modeBits: modeBits
+  };
+}
+
+function buildSampleMap(h) {
+  var xy = new Float64Array(DATA_CELLS * 2);
+  var index = 0;
+  for (var gy = 0; gy < DATA_ROWS; gy++) {
+    for (var gx = 0; gx < DATA_COLS; gx++, index++) {
+      var p = project(h, DATA_OFFSET_X + gx + 0.5, DATA_OFFSET_Y + gy + 0.5);
+      if (!p) return null;
+      xy[index * 2] = p.x;
+      xy[index * 2 + 1] = p.y;
+    }
+  }
+  return xy;
+}
+
+function sampleCellsToKeys(data, w, h, sampleMap, radius) {
+  for (var i = 0; i < DATA_CELLS; i++) {
+    var x = sampleMap[i * 2];
+    var y = sampleMap[i * 2 + 1];
+    if (x < 0 || x >= w || y < 0 || y >= h) return false;
+    var rgb = sampleRgb(data, w, h, x, y, radius);
+    var r = Math.max(0, Math.min(31, rgb[0] >> 3));
+    var g = Math.max(0, Math.min(31, rgb[1] >> 3));
+    var b = Math.max(0, Math.min(31, rgb[2] >> 3));
+    sampleKeyScratch[i] = (r << 10) | (g << 5) | b;
+  }
+  return true;
+}
+
+function decodeSampleKeys(palette, bits, homography) {
+  var frame = bits === 3 ? frame3Scratch : frame2Scratch;
+  frame.fill(0);
+  var count = bits === 3 ? 8 : 4;
+  var lut = getPaletteLut(palette, count);
+  for (var i = 0; i < DATA_CELLS; i++) setBits(frame, i, lut[sampleKeyScratch[i]], bits);
+
+  if (lastDebug) lastDebug.stage = 'parse';
+  var parsed = parseFrame(frame, bits, homography);
+  if (lastDebug) {
+    if (bits === 2) lastDebug.parse2 = parsed.reason;
+    else lastDebug.parse3 = parsed.reason;
+  }
+  return parsed.frame;
+}
+
+function paletteExactKey(palette, count) {
+  var out = [];
+  for (var i = 0; i < count; i++) out.push(palette[i][0], palette[i][1], palette[i][2]);
+  return out.join(',');
+}
+
+function getPaletteLut(palette, count) {
+  var key = paletteExactKey(palette, count);
+  var entry = lutCache[count];
+  if (entry.lut && entry.key === key) return entry.lut;
+  entry.key = key;
+  entry.lut = createPaletteLut(palette, count);
+  return entry.lut;
 }
 
 async function findAprilTagMarkerGroups(image) {
@@ -171,9 +277,8 @@ async function findAprilTagMarkerGroups(image) {
   var ids = [];
   var candidates = [];
   var grouped = [];
-  for (var b = 0; b < TAG_BASES.length; b++) {
-    grouped[TAG_BASES[b]] = { tl: [], tr: [], bl: [], br: [] };
-  }
+  for (var b = 0; b < TAG_BASES.length; b++) grouped[TAG_BASES[b]] = { tl: [], tr: [], bl: [], br: [] };
+
   for (var i = 0; i < list.length; i++) {
     var marker = list[i];
     ids.push(marker.id);
@@ -185,6 +290,7 @@ async function findAprilTagMarkerGroups(image) {
       if (marker.id === base + 3) grouped[base].br.push(marker);
     }
   }
+
   var missing = [];
   var seenBase = {};
   for (var g = 0; g < TAG_BASES.length; g++) {
@@ -196,6 +302,7 @@ async function findAprilTagMarkerGroups(image) {
     if (missingForGroup.length) missing.push('base' + nextBase + ':' + missingForGroup.join('/'));
     candidates = candidates.concat(buildGroupCandidates(found, nextBase));
   }
+
   var groups = selectMarkerGroups(candidates).map(function(group) {
     return { slot: group.slot, marks: group.marks };
   });
@@ -312,20 +419,20 @@ function markerInfo(marker) {
 
 function toGrayscale(image) {
   var rgba = image.data;
-  var gray = new Uint8Array(image.width * image.height);
-  for (var i = 0, j = 0; i < rgba.length; i += 4, j++) {
-    gray[j] = (rgba[i] * 77 + rgba[i + 1] * 150 + rgba[i + 2] * 29) >> 8;
+  var size = image.width * image.height;
+  if (!grayScratch || grayScratchWidth !== image.width || grayScratchHeight !== image.height) {
+    grayScratch = new Uint8Array(size);
+    grayScratchWidth = image.width;
+    grayScratchHeight = image.height;
   }
-  return gray;
+  for (var i = 0, j = 0; i < rgba.length; i += 4, j++) {
+    grayScratch[j] = (rgba[i] * 77 + rgba[i + 1] * 150 + rgba[i + 2] * 29) >> 8;
+  }
+  return grayScratch;
 }
 
 function buildGridHomography(marks) {
-  var src = [
-    TAG_CENTER.tl,
-    TAG_CENTER.tr,
-    TAG_CENTER.br,
-    TAG_CENTER.bl
-  ];
+  var src = [TAG_CENTER.tl, TAG_CENTER.tr, TAG_CENTER.br, TAG_CENTER.bl];
   var dst = [
     [marks.tl.cx, marks.tl.cy],
     [marks.tr.cx, marks.tr.cy],
@@ -333,25 +440,6 @@ function buildGridHomography(marks) {
     [marks.bl.cx, marks.bl.cy]
   ];
   return solveHomography(src, dst);
-}
-
-function markerBounds(marks) {
-  var minX = Infinity;
-  var minY = Infinity;
-  var maxX = -Infinity;
-  var maxY = -Infinity;
-  var centers = [marks.tl, marks.tr, marks.bl, marks.br];
-  for (var i = 0; i < centers.length; i++) {
-    for (var j = 0; j < centers[i].corners.length; j++) {
-      var c = centers[i].corners[j];
-      minX = Math.min(minX, c.x);
-      minY = Math.min(minY, c.y);
-      maxX = Math.max(maxX, c.x);
-      maxY = Math.max(maxY, c.y);
-    }
-  }
-  var cell = Math.max(2, Math.max((maxX - minX) / TOTAL_COLS, (maxY - minY) / TOTAL_ROWS));
-  return { minX: minX, minY: minY, maxX: maxX, maxY: maxY, cell: cell };
 }
 
 function projectedDataBox(h) {
@@ -369,6 +457,7 @@ function projectedBox(h, x, y, width, height, confidence) {
     project(h, x + width, y + height),
     project(h, x, y + height)
   ];
+  if (!pts[0] || !pts[1] || !pts[2] || !pts[3]) return { x: 0, y: 0, width: 0, height: 0, confidence: 0 };
   var minX = Math.min(pts[0].x, pts[1].x, pts[2].x, pts[3].x);
   var maxX = Math.max(pts[0].x, pts[1].x, pts[2].x, pts[3].x);
   var minY = Math.min(pts[0].y, pts[1].y, pts[2].y, pts[3].y);
@@ -400,6 +489,8 @@ function calibratePalette(data, w, h, homography) {
 function parseFrame(frame, bits, homography) {
   if (frame[0] !== 70 || frame[1] !== 71 || frame[2] !== 70 || frame[3] !== 50) return { frame: null, reason: 'magic' };
   if (frame[4] !== PROTOCOL_VERSION || frame[5] !== bits) return { frame: null, reason: 'version ' + frame[4] + '/' + frame[5] };
+
+  var symbolIndex = readU32(frame, 8);
   var sourceSymbols = readU32(frame, 12);
   var transferLength = readU32(frame, 16);
   var packetLen = readU16(frame, 20);
@@ -410,9 +501,11 @@ function parseFrame(frame, bits, homography) {
   var cycleSymbols = readU32(frame, 32);
   var dataCols = readU16(frame, 36);
   var dataRows = readU16(frame, 38);
-  var symbolIndex = readU32(frame, 8);
   var packetIndex = readU32(frame, 40);
+  var transferIdLo = readU32(frame, 48);
+  var transferIdHi = readU32(frame, 52);
   var expectedPayload = (bits === 3 ? FRAME_BYTES_3 : FRAME_BYTES_2) - HEADER_BYTES;
+
   if (lastDebug) {
     lastDebug.parsedBits = bits;
     lastDebug.parsedSourceSymbols = sourceSymbols;
@@ -420,31 +513,44 @@ function parseFrame(frame, bits, homography) {
     lastDebug.parsedPacketIndex = packetIndex;
     lastDebug.parsedPacketLen = packetLen;
   }
-  if (sourceSymbols < 1 || transferLength < 1 || packetLen < 5 || packetLen > expectedPayload) return { frame: null, reason: 'header packet=' + packetLen + ' src=' + sourceSymbols + ' len=' + transferLength };
-  if (payloadBytes !== expectedPayload || mtu + 4 > payloadBytes) return { frame: null, reason: 'payload payload=' + payloadBytes + ' mtu=' + mtu + ' expected=' + expectedPayload };
-  if (dataCols !== DATA_COLS || dataRows !== DATA_ROWS) return { frame: null, reason: 'geometry data=' + dataCols + 'x' + dataRows };
-  var packet = frame.slice(HEADER_BYTES, HEADER_BYTES + packetLen);
-  var actualChecksum = checksum32(packet);
+
+  if (sourceSymbols < 1 || transferLength < 1 || packetLen < 5 || packetLen > expectedPayload) {
+    return { frame: null, reason: 'header packet=' + packetLen + ' src=' + sourceSymbols + ' len=' + transferLength };
+  }
+  if (payloadBytes !== expectedPayload || mtu + 4 > payloadBytes) {
+    return { frame: null, reason: 'payload payload=' + payloadBytes + ' mtu=' + mtu + ' expected=' + expectedPayload };
+  }
+  if (dataCols !== DATA_COLS || dataRows !== DATA_ROWS) {
+    return { frame: null, reason: 'geometry data=' + dataCols + 'x' + dataRows };
+  }
+
+  var actualChecksum = crc32cFrame(frame, HEADER_BYTES + packetLen);
   if (actualChecksum !== checksum) return { frame: null, reason: 'checksum want=' + checksum + ' got=' + actualChecksum };
+
+  var packet = frame.slice(HEADER_BYTES, HEADER_BYTES + packetLen);
   var gridBox = projectedGridBox(homography);
   var dataBox = projectedDataBox(homography);
-  return { frame: {
-    kind: 'raptorq',
-    symbolIndex: symbolIndex,
-    sourceSymbols: sourceSymbols,
-    transferLength: transferLength,
-    packetLen: packetLen,
-    payloadBytes: payloadBytes,
-    mtu: mtu,
-    repairPacketsPerBlock: repairPacketsPerBlock,
-    cycleSymbols: cycleSymbols,
-    packetIndex: packetIndex,
-    colorBits: bits,
-    gridSlot: lastDebug ? lastDebug.gridSlot : 0,
-    bbox: gridBox,
-    dataBox: dataBox,
-    packet: packet.buffer
-  }, reason: 'ok' };
+  return {
+    frame: {
+      kind: 'raptorq',
+      symbolIndex: symbolIndex,
+      sourceSymbols: sourceSymbols,
+      transferLength: transferLength,
+      packetLen: packetLen,
+      payloadBytes: payloadBytes,
+      mtu: mtu,
+      repairPacketsPerBlock: repairPacketsPerBlock,
+      cycleSymbols: cycleSymbols,
+      packetIndex: packetIndex,
+      colorBits: bits,
+      gridSlot: lastDebug ? lastDebug.gridSlot : 0,
+      transferId: formatTransferId(transferIdHi, transferIdLo),
+      bbox: gridBox,
+      dataBox: dataBox,
+      packet: packet.buffer
+    },
+    reason: 'ok'
+  };
 }
 
 function sampleRgb(data, w, h, x, y, radius) {
@@ -496,13 +602,6 @@ function createPaletteLut(palette, count) {
     }
   }
   return lut;
-}
-
-function nearestPaletteLut(rgb, lut) {
-  var r = Math.max(0, Math.min(31, rgb[0] >> 3));
-  var g = Math.max(0, Math.min(31, rgb[1] >> 3));
-  var b = Math.max(0, Math.min(31, rgb[2] >> 3));
-  return lut[(r << 10) | (g << 5) | b];
 }
 
 function setBits(bytes, index, value, bits) {
@@ -571,6 +670,30 @@ function project(h, x, y) {
   };
 }
 
+var CRC32C_TABLE = (function() {
+  var table = new Uint32Array(256);
+  for (var i = 0; i < 256; i++) {
+    var crc = i;
+    for (var j = 0; j < 8; j++) crc = (crc & 1) ? (0x82f63b78 ^ (crc >>> 1)) : (crc >>> 1);
+    table[i] = crc >>> 0;
+  }
+  return table;
+})();
+
+function crc32cFrame(bytes, length) {
+  var crc = 0xffffffff;
+  var end = Math.min(bytes.length, length);
+  for (var i = 0; i < end; i++) {
+    var value = (i >= 22 && i < 26) ? 0 : bytes[i];
+    crc = CRC32C_TABLE[(crc ^ value) & 255] ^ (crc >>> 8);
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function formatTransferId(hi, lo) {
+  return hi.toString(16).padStart(8, '0') + lo.toString(16).padStart(8, '0');
+}
+
 function miss(reason) {
   lastMissReason = reason;
   if (lastDebug) lastDebug.stage = reason;
@@ -578,12 +701,7 @@ function miss(reason) {
 }
 
 function formatBox(box) {
-  return [
-    Math.round(box.x),
-    Math.round(box.y),
-    Math.round(box.width),
-    Math.round(box.height)
-  ].join(',');
+  return [Math.round(box.x), Math.round(box.y), Math.round(box.width), Math.round(box.height)].join(',');
 }
 
 function readU16(buf, offset) {
@@ -592,13 +710,4 @@ function readU16(buf, offset) {
 
 function readU32(buf, offset) {
   return (buf[offset] | (buf[offset + 1] << 8) | (buf[offset + 2] << 16) | (buf[offset + 3] << 24)) >>> 0;
-}
-
-function checksum32(bytes) {
-  var h = 2166136261 >>> 0;
-  for (var i = 0; i < bytes.length; i++) {
-    h ^= bytes[i];
-    h = Math.imul(h, 16777619) >>> 0;
-  }
-  return h >>> 0;
 }
