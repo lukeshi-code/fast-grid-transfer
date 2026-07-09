@@ -26,242 +26,60 @@
       display: grid;
       grid-template-columns: minmax(320px, 420px) 1fr;
     }
-    aside {
-      border-right: 1px solid var(--border);
-      background: var(--surface);
-      padding: 22px;
-      overflow: auto;
-    }
-    main {
-      min-width: 0;
-      padding: 24px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-    .preview {
-      position: relative;
-      width: min(92vw, 1000px);
-      max-height: 78vh;
-      display: grid;
-    }
+    aside { border-right: 1px solid var(--border); background: var(--surface); padding: 22px; overflow: auto; }
+    main { min-width: 0; padding: 24px; display: flex; align-items: center; justify-content: center; }
+    .preview { position: relative; width: min(92vw, 1000px); max-height: 78vh; display: grid; }
     h1 { font-size: 1.25rem; margin: 0 0 4px; }
     p { color: var(--dim); line-height: 1.45; }
     a { color: var(--accent); }
     button {
-      border: 0;
-      border-radius: 6px;
-      background: var(--accent);
-      color: #111;
-      font-weight: 700;
-      padding: 10px 14px;
-      cursor: pointer;
-      width: 100%;
-      margin-top: 10px;
+      border: 0; border-radius: 6px; background: var(--accent); color: #111; font-weight: 700;
+      padding: 10px 14px; cursor: pointer; width: 100%; margin-top: 10px;
     }
-    button.secondary {
-      background: transparent;
-      color: var(--accent);
-      border: 1px solid var(--accent);
-    }
+    button.secondary { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
     button.danger { background: var(--err); }
     button:disabled { opacity: 0.45; cursor: default; }
     input {
-      width: 100%;
-      border-radius: 6px;
-      border: 1px solid var(--border);
-      background: #10111a;
-      color: var(--text);
-      padding: 9px 10px;
-      margin-top: 6px;
-      font: inherit;
+      width: 100%; border-radius: 6px; border: 1px solid var(--border); background: #10111a;
+      color: var(--text); padding: 9px 10px; margin-top: 6px; font: inherit;
     }
     label { color: var(--dim); font-size: 0.82rem; }
-    label.check {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      margin-top: 8px;
-      color: var(--text);
-    }
+    label.check { display: flex; align-items: center; gap: 8px; margin-top: 8px; color: var(--text); }
     label.check input { width: auto; margin: 0; }
-    .metric {
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      padding: 10px;
-      margin-top: 10px;
-      background: rgba(255,255,255,0.03);
+    .metric, .summary, .apply-panel {
+      border: 1px solid var(--border); border-radius: 8px; padding: 10px; margin-top: 10px;
+      background: rgba(255,255,255,0.04);
     }
     .metric strong { color: var(--text); display: block; font-size: 0.95rem; }
     .metric span { color: var(--dim); font-size: 0.82rem; }
-    .summary {
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 12px;
-      margin-top: 12px;
-      background: rgba(255,255,255,0.04);
-    }
-    .summary-head {
-      display: grid;
-      grid-template-columns: 1fr auto;
-      gap: 12px;
-      align-items: start;
-    }
-    .summary-label {
-      color: var(--dim);
-      display: block;
-      font-size: 0.76rem;
-      margin-bottom: 4px;
-    }
-    .summary-head strong {
-      display: block;
-      font-size: 1.05rem;
-      line-height: 1.25;
-    }
-    .summary-percent {
-      color: var(--accent);
-      font-size: 2rem;
-      font-weight: 800;
-      line-height: 1;
-      min-width: 84px;
-      text-align: right;
-    }
-    .summary-detail {
-      color: var(--dim);
-      font-size: 0.84rem;
-      line-height: 1.35;
-      margin-top: 8px;
-    }
-    .quick-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 8px;
-      margin-top: 12px;
-    }
-    .quick-item {
-      border: 1px solid rgba(255,255,255,0.08);
-      border-radius: 6px;
-      padding: 8px;
-      background: rgba(0,0,0,0.13);
-      min-height: 58px;
-    }
-    .quick-item span {
-      color: var(--dim);
-      display: block;
-      font-size: 0.72rem;
-      margin-bottom: 4px;
-    }
-    .quick-item strong {
-      color: var(--text);
-      display: block;
-      font-size: 0.88rem;
-      line-height: 1.3;
-      overflow-wrap: anywhere;
-    }
-    .advanced {
-      margin-top: 10px;
-      color: var(--dim);
-      font-size: 0.86rem;
-    }
-    .advanced summary {
-      cursor: pointer;
-      color: var(--accent);
-      user-select: none;
-    }
+    .summary-head { display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: start; }
+    .summary-label { color: var(--dim); display: block; font-size: 0.76rem; margin-bottom: 4px; }
+    .summary-head strong { display: block; font-size: 1.05rem; line-height: 1.25; }
+    .summary-percent { color: var(--accent); font-size: 2rem; font-weight: 800; line-height: 1; min-width: 84px; text-align: right; }
+    .summary-detail { color: var(--dim); font-size: 0.84rem; line-height: 1.35; margin-top: 8px; }
+    .quick-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }
+    .quick-item { border: 1px solid rgba(255,255,255,0.08); border-radius: 6px; padding: 8px; background: rgba(0,0,0,0.13); min-height: 58px; }
+    .quick-item span { color: var(--dim); display: block; font-size: 0.72rem; margin-bottom: 4px; }
+    .quick-item strong { color: var(--text); display: block; font-size: 0.88rem; line-height: 1.3; overflow-wrap: anywhere; }
+    .advanced { margin-top: 10px; color: var(--dim); font-size: 0.86rem; }
+    .advanced summary { cursor: pointer; color: var(--accent); user-select: none; }
     .diag {
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      padding: 10px;
-      margin-top: 10px;
-      background: rgba(255,255,255,0.03);
-      display: grid;
-      grid-template-columns: 1fr auto;
-      gap: 6px 10px;
-      font-size: 0.78rem;
+      border: 1px solid var(--border); border-radius: 6px; padding: 10px; margin-top: 10px;
+      background: rgba(255,255,255,0.03); display: grid; grid-template-columns: 1fr auto;
+      gap: 6px 10px; font-size: 0.78rem;
     }
-    .diag h2 {
-      grid-column: 1 / -1;
-      font-size: 0.9rem;
-      margin: 0 0 4px;
-    }
+    .diag h2 { grid-column: 1 / -1; font-size: 0.9rem; margin: 0 0 4px; }
     .diag .k { color: var(--dim); }
-    .diag .v {
-      color: var(--text);
-      text-align: right;
-      max-width: 220px;
-      overflow-wrap: anywhere;
-    }
-    .progress {
-      height: 10px;
-      border-radius: 5px;
-      overflow: hidden;
-      background: #10111a;
-      margin-top: 10px;
-      border: 1px solid var(--border);
-    }
+    .diag .v { color: var(--text); text-align: right; max-width: 220px; overflow-wrap: anywhere; }
+    .progress { height: 10px; border-radius: 5px; overflow: hidden; background: #10111a; margin-top: 10px; border: 1px solid var(--border); }
     .fill { height: 100%; width: 0%; background: var(--accent); transition: width 0.12s linear; }
-    .grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(18px, 1fr));
-      gap: 4px;
-      margin-top: 12px;
-      max-height: 180px;
-      overflow: auto;
-    }
-    .cell {
-      height: 22px;
-      border-radius: 4px;
-      display: grid;
-      place-items: center;
-      background: #363950;
-      color: var(--dim);
-      font-size: 0.68rem;
-    }
-    .cell.ok { background: var(--ok); color: #111; }
-    .cell.fec { background: var(--accent); color: #111; }
-    .cell.failed { background: var(--err); color: #111; }
-    .cell.recovered { background: var(--warn); color: #111; }
-    video {
-      width: 100%;
-      max-height: 78vh;
-      background: #05060a;
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      box-shadow: 0 18px 60px rgba(0,0,0,0.45);
-    }
-    #overlay {
-      position: absolute;
-      inset: 0;
-      width: 100%;
-      height: 100%;
-      pointer-events: none;
-      border-radius: 8px;
-    }
+    .packet-map { width: 100%; height: 180px; display: block; margin-top: 12px; background: #10111a; border: 1px solid var(--border); border-radius: 6px; image-rendering: pixelated; }
+    video { width: 100%; max-height: 78vh; background: #05060a; border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 18px 60px rgba(0,0,0,0.45); }
+    #overlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; border-radius: 8px; }
     .hint { color: var(--warn); font-size: 0.82rem; }
-    .apply-panel {
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 12px;
-      margin-top: 12px;
-      background: rgba(255,255,255,0.04);
-    }
-    .apply-panel h2 {
-      margin: 0 0 8px;
-      font-size: 0.95rem;
-    }
-    .apply-panel p {
-      margin: 6px 0;
-      font-size: 0.82rem;
-    }
-    .apply-result {
-      margin-top: 8px;
-      color: var(--dim);
-      font-size: 0.78rem;
-      max-height: 120px;
-      overflow: auto;
-      overflow-wrap: anywhere;
-      white-space: pre-wrap;
-    }
+    .apply-panel h2 { margin: 0 0 8px; font-size: 0.95rem; }
+    .apply-panel p { margin: 6px 0; font-size: 0.82rem; }
+    .apply-result { margin-top: 8px; color: var(--dim); font-size: 0.78rem; max-height: 120px; overflow: auto; overflow-wrap: anywhere; white-space: pre-wrap; }
     .apply-result.ok { color: var(--ok); }
     .apply-result.err { color: var(--err); }
     @media (max-width: 900px) {
@@ -273,22 +91,17 @@
 <body>
   <aside>
     <h1>Fast Grid Decoder</h1>
-    <p>Capture the <a href="../encoder/">Fast Grid Encoder</a> tab/window. A Web Worker decodes colored grid frames in the background.</p>
+    <p>Capture the <a href="../encoder/">Fast Grid Encoder</a> tab/window. Two workers decode whole frames concurrently; the next frame goes to whichever worker is idle.</p>
 
     <button id="start">Start Screen Capture</button>
     <button id="stop" class="danger" disabled>Stop</button>
     <button id="download" class="secondary" disabled>Download File</button>
+
     <div class="apply-panel" id="apply-panel">
       <h2>Apply Delta Package</h2>
       <p>After a delta TAR is decoded, choose the target code root and apply changed files.</p>
-      <label>
-        Target root
-        <input id="apply-target" placeholder="D:\code1">
-      </label>
-      <label class="check">
-        <input id="apply-deletes" type="checkbox">
-        Apply deletions from deleted.txt
-      </label>
+      <label>Target root<input id="apply-target" placeholder="D:\code1"></label>
+      <label class="check"><input id="apply-deletes" type="checkbox">Apply deletions from deleted.txt</label>
       <button id="check-locks" class="secondary">Check File Locks</button>
       <button id="close-locks" class="danger" disabled>Close Locking Processes</button>
       <button id="apply-delta" class="secondary" disabled>Apply Files</button>
@@ -297,10 +110,7 @@
 
     <div class="summary">
       <div class="summary-head">
-        <div>
-          <span class="summary-label">Status</span>
-          <strong id="status">Idle</strong>
-        </div>
+        <div><span class="summary-label">Status</span><strong id="status">Idle</strong></div>
         <div class="summary-percent" id="transfer-percent">0%</div>
       </div>
       <div class="summary-detail" id="detail">Waiting for screen capture.</div>
@@ -314,21 +124,14 @@
         <div class="quick-item"><span>Scan Mode</span><strong id="mode-text">Full scan</strong></div>
       </div>
     </div>
+
     <div class="metric"><strong id="progress-text">Packet Map</strong><span id="rate">Green = received, red = failed, yellow = recovered by RaptorQ</span></div>
-    <div class="grid" id="chunk-grid"></div>
-    <details class="advanced">
-      <summary>Advanced diagnostics</summary>
-      <div class="diag" id="diagnostics"><h2>Diagnostics</h2></div>
-    </details>
+    <canvas id="chunk-grid" class="packet-map"></canvas>
+    <details class="advanced"><summary>Advanced diagnostics</summary><div class="diag" id="diagnostics"><h2>Diagnostics</h2></div></details>
     <p class="hint">Best results: choose the encoder tab/window, not the whole desktop. Keep browser zoom at 100%.</p>
   </aside>
 
-  <main>
-    <div class="preview">
-      <video id="video" autoplay playsinline muted></video>
-      <canvas id="overlay"></canvas>
-    </div>
-  </main>
+  <main><div class="preview"><video id="video" autoplay playsinline muted></video><canvas id="overlay"></canvas></div></main>
 
   <script>
     var startBtn = document.getElementById('start');
@@ -352,7 +155,8 @@
     var progressText = document.getElementById('progress-text');
     var rateEl = document.getElementById('rate');
     var progress = document.getElementById('progress');
-    var chunkGrid = document.getElementById('chunk-grid');
+    var packetCanvas = document.getElementById('chunk-grid');
+    var packetCtx = packetCanvas.getContext('2d');
     var diagnostics = document.getElementById('diagnostics');
     var video = document.getElementById('video');
     var overlay = document.getElementById('overlay');
@@ -360,68 +164,74 @@
 
     var WORKER_COUNT = 2;
     var RELOCATE_EVERY = 8;
-    var workers = [];
-    var pendingWorkerReplies = 0;
-    var batchAccepted = 0;
-    var batchRoiBox = null;
-    var batchRoiSlots = [];
-    var PAYLOAD_BYTES = 3408;
     var EXPECTED_GRIDS = 2;
-    var ROI_TRACKED_GRIDS = 2;
+    var ROI_SCAN_MAX_WIDTH = 1920;
+    var FULL_SCAN_MAX_WIDTH = 1920;
+    var workers = [];
+    var workerStates = [];
+    var nextWorkerHint = 0;
+
     var stream = null;
     var canvas = document.createElement('canvas');
     var ctx = canvas.getContext('2d', { willReadFrequently: true });
     ctx.imageSmoothingEnabled = false;
     var raf = null;
-    var busy = false;
-    var seenPackets = {};
-    var seenVisualFrames = {};
-    var expectedTotal = 0;
-    var cells = [];
+    var scanScheduled = false;
     var decodedBlob = null;
     var decodedName = 'file.bin';
+
+    var PAYLOAD_BYTES = 3400;
     var scanCount = 0;
     var acceptedCount = 0;
-    var lastRateTime = performance.now();
-    var lastScanCount = 0;
-    var lastAcceptedCount = 0;
+    var completedScans = 0;
+    var droppedCaptureOpportunities = 0;
+    var seenPackets = Object.create(null);
+    var seenVisualFrames = Object.create(null);
+    var expectedTotal = 0;
+    var packetStates = new Uint8Array(0);
+    var packetMapRaf = 0;
+    var currentTransferId = '';
+
     var roi = null;
     var roiMisses = 0;
     var roiFallbackLevel = 0;
-    var pendingScan = null;
     var lastScanSource = null;
     var lastDetectedBox = null;
     var lastBoxConfidence = 0;
-    var manifest = null;
+
     var missReason = '';
-    var missStats = {};
+    var missStats = Object.create(null);
     var receivedPackets = 0;
     var duplicatePackets = 0;
     var repeatedVisualFrames = 0;
-    var ROI_SCAN_MAX_WIDTH = 1920;
-    var FULL_SCAN_MAX_WIDTH = 1920;
-    var sourcePacketsSeen = {};
-    var repairPacketsSeen = {};
-    var failedPacketsSeen = {};
+    var sourcePacketsSeen = Object.create(null);
+    var repairPacketsSeen = Object.create(null);
+    var failedPacketsSeen = Object.create(null);
     var sourcePacketCount = 0;
     var repairPacketCount = 0;
     var failedPacketCount = 0;
     var recoveredSourceSymbols = [];
     var lastPacketKind = '-';
+
     var raptorReady = null;
     var raptorDecoder = null;
     var RaptorDecoder = null;
     var RaptorEncodingPacket = null;
+
     var lastDebug = {};
     var lastAcceptedFrame = null;
+    var lastRateTime = performance.now();
+    var lastScanCount = 0;
+    var lastAcceptedCount = 0;
     var lastFps = 0;
     var lastSuccess = 0;
     var lastPacketRate = 0;
     var lastVisualRate = 0;
+    var lastLocks = [];
 
     startBtn.addEventListener('click', startCapture);
     stopBtn.addEventListener('click', stopCapture);
-    window.addEventListener('resize', drawOverlay);
+    window.addEventListener('resize', function() { drawOverlay(); schedulePacketMapDraw(); });
     downloadBtn.addEventListener('click', function() {
       if (!decodedBlob) return;
       var a = document.createElement('a');
@@ -433,96 +243,71 @@
     applyDeltaBtn.addEventListener('click', applyDeltaPackage);
     checkLocksBtn.addEventListener('click', checkFileLocks);
     closeLocksBtn.addEventListener('click', closeLockingProcesses);
+
+    for (var workerIndex = 0; workerIndex < WORKER_COUNT; workerIndex++) createDecodeWorker(workerIndex);
     checkBackendHealth();
 
-    for (var workerIndex = 0; workerIndex < WORKER_COUNT; workerIndex++) {
-      workers.push(createDecodeWorker(workerIndex));
-    }
-
     function createDecodeWorker(workerIndex) {
-      var nextWorker = new Worker('fast-grid-worker.js');
-      nextWorker.onmessage = function(event) {
-        handleWorkerMessage(event.data, workerIndex);
-      };
-      nextWorker.onerror = function(err) {
+      var worker = new Worker('fast-grid-worker.js');
+      var state = { worker: worker, busy: false, frameSeq: 0, scan: null, startedAt: 0 };
+      workers.push(worker);
+      workerStates.push(state);
+      worker.onmessage = function(event) { handleWorkerMessage(event.data, workerIndex); };
+      worker.onerror = function(err) {
+        state.busy = false;
+        state.scan = null;
         detailEl.textContent = err.message || 'Worker error';
         lastDebug = { stage: 'worker-error', error: err.message || 'Worker error', worker: workerIndex };
-        finishWorkerReply();
+        scheduleScan();
       };
-      return nextWorker;
     }
 
     function handleWorkerMessage(msg, workerIndex) {
+      var state = workerStates[workerIndex];
+      var scan = state.scan;
+      state.busy = false;
+      state.scan = null;
+      completedScans++;
+
+      var accepted = 0;
+      var roiBox = null;
+      var roiSlots = [];
+      lastDebug = msg.debug || {};
+      lastDebug.worker = workerIndex;
+      lastDebug.inFlight = countBusyWorkers();
+
       if (msg.type === 'frames') {
-        lastDebug = msg.debug || {};
-        lastDebug.worker = workerIndex;
         for (var i = 0; i < msg.frames.length; i++) {
-          handleAcceptedFrame(msg.frames[i], false);
-          batchAccepted++;
-          batchRoiBox = unionBbox(batchRoiBox, msg.frames[i].bbox);
-          if (msg.frames[i].gridSlot != null && batchRoiSlots.indexOf(msg.frames[i].gridSlot) === -1) batchRoiSlots.push(msg.frames[i].gridSlot);
+          var frame = msg.frames[i];
+          if (handleAcceptedFrame(frame)) accepted++;
+          roiBox = unionBbox(roiBox, frame.bbox);
+          if (frame.gridSlot != null && roiSlots.indexOf(frame.gridSlot) === -1) roiSlots.push(frame.gridSlot);
         }
-        drawOverlay();
-      } else if (msg.type === 'frame') {
-        lastDebug = msg.debug || {};
-        lastDebug.worker = workerIndex;
-        handleAcceptedFrame(msg.frame, false);
-        batchAccepted++;
-        batchRoiBox = unionBbox(batchRoiBox, msg.frame.bbox);
-        if (msg.frame.gridSlot != null && batchRoiSlots.indexOf(msg.frame.gridSlot) === -1) batchRoiSlots.push(msg.frame.gridSlot);
-        drawOverlay();
+      } else if (msg.type === 'frame' && msg.frame) {
+        if (handleAcceptedFrame(msg.frame)) accepted++;
+        roiBox = msg.frame.bbox;
+        if (msg.frame.gridSlot != null) roiSlots.push(msg.frame.gridSlot);
       } else if (msg.type === 'miss') {
-        lastDebug = msg.debug || {};
-        lastDebug.worker = workerIndex;
         recordScanMiss(msg.reason || 'unknown');
         markFailedFrameFromDebug(lastDebug);
-        drawOverlay();
       } else if (msg.type === 'error') {
-        detailEl.textContent = msg.message;
-        lastDebug = { stage: 'worker-error', error: msg.message, worker: workerIndex };
+        detailEl.textContent = msg.message || 'Worker error';
+        recordScanMiss('worker-error');
       }
-      renderDiagnostics();
-      renderSummary();
-      finishWorkerReply();
-    }
 
-    function finishWorkerReply() {
-      pendingWorkerReplies = Math.max(0, pendingWorkerReplies - 1);
-      if (pendingWorkerReplies > 0) return;
-      busy = false;
-      if (batchRoiSlots.length >= 2 && batchRoiBox) {
-        updateRoiFromWorker(batchRoiBox, false, batchRoiSlots);
-      } else if (batchAccepted > 0) {
+      if (roiSlots.length >= EXPECTED_GRIDS && roiBox && scan) {
+        updateRoiFromWorker(roiBox, roiSlots, scan);
+      } else if (accepted > 0) {
         handleScanMiss('partial-grid');
       } else if (roi) {
         handleScanMiss('batch');
       }
+
+      drawOverlay();
+      updateRate();
+      renderDiagnostics();
+      renderSummary();
       scheduleScan();
-    }
-
-    function handleAcceptedFrame(frame, updateRoi) {
-      var visualKey = (frame.gridSlot == null ? 0 : frame.gridSlot) + ':' + frame.symbolIndex;
-      if (seenVisualFrames[visualKey]) {
-        repeatedVisualFrames++;
-        return;
-      }
-      seenVisualFrames[visualKey] = true;
-      lastAcceptedFrame = frame;
-      acceptedCount++;
-      if (updateRoi !== false) updateRoiFromWorker(frame.bbox, false, [frame.gridSlot]);
-      PAYLOAD_BYTES = frame.payloadBytes || PAYLOAD_BYTES;
-      var packet = new Uint8Array(frame.packet);
-      acceptRaptorFrame(frame, packet);
-    }
-
-    function unionBbox(a, b) {
-      if (!b) return a;
-      if (!a) return { x: b.x, y: b.y, width: b.width, height: b.height, confidence: b.confidence || 0 };
-      var minX = Math.min(a.x, b.x);
-      var minY = Math.min(a.y, b.y);
-      var maxX = Math.max(a.x + a.width, b.x + b.width);
-      var maxY = Math.max(a.y + a.height, b.y + b.height);
-      return { x: minX, y: minY, width: maxX - minX, height: maxY - minY, confidence: Math.max(a.confidence || 0, b.confidence || 0) };
     }
 
     async function startCapture() {
@@ -535,10 +320,7 @@
         });
         video.srcObject = stream;
         await video.play();
-        drawOverlay();
-        stream.getTracks().forEach(function(track) {
-          track.addEventListener('ended', stopCapture);
-        });
+        stream.getTracks().forEach(function(track) { track.addEventListener('ended', stopCapture); });
         startBtn.disabled = true;
         stopBtn.disabled = false;
         statusEl.textContent = 'Capturing';
@@ -546,7 +328,7 @@
         scheduleScan();
       } catch (err) {
         statusEl.textContent = 'Capture failed';
-        detailEl.textContent = err.message;
+        detailEl.textContent = err.message || String(err);
       }
     }
 
@@ -564,16 +346,13 @@
     function stopCapture() {
       if (raf) cancelAnimationFrame(raf);
       raf = null;
-      busy = false;
-      pendingWorkerReplies = 0;
-      batchAccepted = 0;
-      batchRoiBox = null;
-      batchRoiSlots = [];
+      scanScheduled = false;
       if (stream) {
         stream.getTracks().forEach(function(track) { track.stop(); });
         stream = null;
       }
       video.srcObject = null;
+      workerStates.forEach(function(state) { state.scan = null; });
       drawOverlay();
       startBtn.disabled = false;
       stopBtn.disabled = true;
@@ -582,49 +361,30 @@
 
     function resetState() {
       stopCapture();
-      seenPackets = {};
-      seenVisualFrames = {};
-      expectedTotal = 0;
-      cells = [];
+      resetTransferState('');
       decodedBlob = null;
       decodedName = 'file.bin';
       scanCount = 0;
+      completedScans = 0;
       acceptedCount = 0;
+      droppedCaptureOpportunities = 0;
       lastRateTime = performance.now();
       lastScanCount = 0;
       lastAcceptedCount = 0;
       roi = null;
       roiMisses = 0;
       roiFallbackLevel = 0;
-      pendingScan = null;
       lastScanSource = null;
       lastDetectedBox = null;
       lastBoxConfidence = 0;
-      manifest = null;
       missReason = '';
-      missStats = {};
-      receivedPackets = 0;
-      duplicatePackets = 0;
-      repeatedVisualFrames = 0;
-      sourcePacketsSeen = {};
-      repairPacketsSeen = {};
-      failedPacketsSeen = {};
-      sourcePacketCount = 0;
-      repairPacketCount = 0;
-      failedPacketCount = 0;
-      recoveredSourceSymbols = [];
-      lastPacketKind = '-';
+      missStats = Object.create(null);
       lastDebug = {};
       lastAcceptedFrame = null;
       lastFps = 0;
       lastSuccess = 0;
       lastPacketRate = 0;
       lastVisualRate = 0;
-      if (raptorDecoder) {
-        try { raptorDecoder.free(); } catch (_) {}
-      }
-      raptorDecoder = null;
-      chunkGrid.innerHTML = '';
       progress.style.width = '0%';
       progressText.textContent = 'Packet Map';
       rateEl.textContent = 'Green = received, red = failed, yellow = recovered by RaptorQ';
@@ -633,47 +393,102 @@
       applyResult.textContent = 'Waiting for a decoded delta TAR.';
       statusEl.textContent = 'Idle';
       detailEl.textContent = 'Waiting for screen capture.';
+      schedulePacketMapDraw();
       renderDiagnostics();
       renderSummary();
       drawOverlay();
     }
 
+    function resetTransferState(nextTransferId) {
+      currentTransferId = nextTransferId || '';
+      seenPackets = Object.create(null);
+      seenVisualFrames = Object.create(null);
+      expectedTotal = 0;
+      packetStates = new Uint8Array(0);
+      receivedPackets = 0;
+      duplicatePackets = 0;
+      repeatedVisualFrames = 0;
+      sourcePacketsSeen = Object.create(null);
+      repairPacketsSeen = Object.create(null);
+      failedPacketsSeen = Object.create(null);
+      sourcePacketCount = 0;
+      repairPacketCount = 0;
+      failedPacketCount = 0;
+      recoveredSourceSymbols = [];
+      lastPacketKind = '-';
+      if (raptorDecoder) {
+        try { raptorDecoder.free(); } catch (_) {}
+      }
+      raptorDecoder = null;
+      schedulePacketMapDraw();
+    }
+
     function scheduleScan() {
-      if (!stream || busy || decodedBlob) return;
+      if (!stream || decodedBlob || scanScheduled) return;
+      scanScheduled = true;
       raf = requestAnimationFrame(scanFrame);
     }
 
     function scanFrame() {
-      if (!stream || busy || decodedBlob) return;
+      scanScheduled = false;
+      if (!stream || decodedBlob) return;
+
+      var workerIndex = findIdleWorker();
+      if (workerIndex < 0) {
+        droppedCaptureOpportunities++;
+        scheduleScan();
+        return;
+      }
+
       var vw = video.videoWidth;
       var vh = video.videoHeight;
       if (!vw || !vh) {
         scheduleScan();
         return;
       }
+
       var source = getScanSource(vw, vh);
       var maxW = source.roi ? ROI_SCAN_MAX_WIDTH : FULL_SCAN_MAX_WIDTH;
       var scale = Math.min(1, maxW / source.sw);
-      canvas.width = Math.max(1, Math.round(source.sw * scale));
-      canvas.height = Math.max(1, Math.round(source.sh * scale));
+      var targetW = Math.max(1, Math.round(source.sw * scale));
+      var targetH = Math.max(1, Math.round(source.sh * scale));
+      if (canvas.width !== targetW) canvas.width = targetW;
+      if (canvas.height !== targetH) canvas.height = targetH;
       ctx.imageSmoothingEnabled = false;
-      ctx.drawImage(video, source.sx, source.sy, source.sw, source.sh, 0, 0, canvas.width, canvas.height);
-      var image = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      pendingScan = { sx: source.sx, sy: source.sy, sw: source.sw, sh: source.sh, scale: scale, roi: source.roi };
-      lastScanSource = source;
-      drawOverlay();
-      busy = true;
-      batchAccepted = 0;
-      batchRoiBox = null;
-      batchRoiSlots = [];
-      pendingWorkerReplies = workers.length;
+      ctx.drawImage(video, source.sx, source.sy, source.sw, source.sh, 0, 0, targetW, targetH);
+      var image = ctx.getImageData(0, 0, targetW, targetH);
+
       scanCount++;
-      var shouldRelocate = !roi || (scanCount % RELOCATE_EVERY === 1);
-      for (var i = 0; i < workers.length; i++) {
-        var copy = new ImageData(new Uint8ClampedArray(image.data), image.width, image.height);
-        workers[i].postMessage({ type: 'frame', image: copy, slotFilter: i, frameSeq: scanCount, relocate: shouldRelocate }, [copy.data.buffer]);
-      }
+      var frameSeq = scanCount;
+      var shouldRelocate = !roi || (frameSeq % RELOCATE_EVERY === 1);
+      var scan = { sx: source.sx, sy: source.sy, sw: source.sw, sh: source.sh, scale: scale, roi: source.roi, level: source.level || 0, frameSeq: frameSeq };
+      lastScanSource = source;
+
+      var state = workerStates[workerIndex];
+      state.busy = true;
+      state.frameSeq = frameSeq;
+      state.scan = scan;
+      state.startedAt = performance.now();
+      nextWorkerHint = (workerIndex + 1) % WORKER_COUNT;
+
+      state.worker.postMessage({ type: 'frame', image: image, frameSeq: frameSeq, relocate: shouldRelocate }, [image.data.buffer]);
+      drawOverlay();
       updateRate();
+      scheduleScan();
+    }
+
+    function findIdleWorker() {
+      for (var offset = 0; offset < WORKER_COUNT; offset++) {
+        var index = (nextWorkerHint + offset) % WORKER_COUNT;
+        if (!workerStates[index].busy) return index;
+      }
+      return -1;
+    }
+
+    function countBusyWorkers() {
+      var count = 0;
+      workerStates.forEach(function(state) { if (state.busy) count++; });
+      return count;
     }
 
     function getScanSource(vw, vh) {
@@ -688,78 +503,25 @@
       return { sx: sx, sy: sy, sw: ex - sx, sh: ey - sy, roi: true, level: roiFallbackLevel };
     }
 
-    function updateRoiFromWorker(bbox, weak, slots) {
-      if (!bbox || !pendingScan) return;
-      if (ROI_TRACKED_GRIDS >= 2 && (!slots || slots.length < 2)) return;
+    function updateRoiFromWorker(bbox, slots, scan) {
+      if (!bbox || !scan || !slots || slots.length < EXPECTED_GRIDS) return;
       var next = {
-        x: pendingScan.sx + bbox.x / pendingScan.scale,
-        y: pendingScan.sy + bbox.y / pendingScan.scale,
-        width: bbox.width / pendingScan.scale,
-        height: bbox.height / pendingScan.scale
+        x: scan.sx + bbox.x / scan.scale,
+        y: scan.sy + bbox.y / scan.scale,
+        width: bbox.width / scan.scale,
+        height: bbox.height / scan.scale
       };
       lastDetectedBox = next;
       lastBoxConfidence = bbox.confidence || 0;
-      next = completeGridRoiFromSlots(next, slots);
-      if (ROI_TRACKED_GRIDS === 2 && !weak) {
-        roi = next;
-        roiMisses = 0;
-        roiFallbackLevel = 0;
-        return;
-      }
-      var weight = weak ? 0.22 : (lastBoxConfidence > 0.65 ? 0.8 : 0.55);
-      if (roi) {
-        roi.x = roi.x * (1 - weight) + next.x * weight;
-        roi.y = roi.y * (1 - weight) + next.y * weight;
-        roi.width = roi.width * (1 - weight) + next.width * weight;
-        roi.height = roi.height * (1 - weight) + next.height * weight;
-      } else {
-        roi = next;
-      }
+      next = normalizeTallRoi(next);
+      roi = next;
       roiMisses = 0;
       roiFallbackLevel = 0;
     }
 
-    function completeGridRoiFromSlots(box, slots) {
-      if (!box || !slots || slots.length < 2) return box;
-      if (ROI_TRACKED_GRIDS === 2) return normalizeTallRoi(box);
-      if (ROI_TRACKED_GRIDS !== 4) return box;
-      var minCol = 1;
-      var maxCol = 0;
-      var minRow = 1;
-      var maxRow = 0;
-      slots.forEach(function(slot) {
-        var col = slot % 2;
-        var row = Math.floor(slot / 2);
-        minCol = Math.min(minCol, col);
-        maxCol = Math.max(maxCol, col);
-        minRow = Math.min(minRow, row);
-        maxRow = Math.max(maxRow, row);
-      });
-      var seenCols = Math.max(1, maxCol - minCol + 1);
-      var seenRows = Math.max(1, maxRow - minRow + 1);
-      var gridW = box.width / seenCols;
-      var gridH = box.height / seenRows;
-      var marginX = box.width * 0.12;
-      var marginY = box.height * 0.12;
-      var videoW = video.videoWidth || (pendingScan ? pendingScan.sw : 0) || (box.x + box.width);
-      var videoH = video.videoHeight || (pendingScan ? pendingScan.sh : 0) || (box.y + box.height);
-      var x = box.x - gridW * minCol - marginX;
-      var y = box.y - gridH * minRow - marginY;
-      var width = gridW * 2 + marginX * 2;
-      var height = gridH * 2 + marginY * 2;
-      var clampedX = Math.max(0, x);
-      var clampedY = Math.max(0, y);
-      return {
-        x: clampedX,
-        y: clampedY,
-        width: Math.max(1, Math.min(videoW - clampedX, width - (clampedX - x))),
-        height: Math.max(1, Math.min(videoH - clampedY, height - (clampedY - y)))
-      };
-    }
-
     function normalizeTallRoi(box) {
-      var videoW = video.videoWidth || (pendingScan ? pendingScan.sw : 0) || (box.x + box.width);
-      var videoH = video.videoHeight || (pendingScan ? pendingScan.sh : 0) || (box.y + box.height);
+      var videoW = video.videoWidth || (box.x + box.width);
+      var videoH = video.videoHeight || (box.y + box.height);
       var marginX = box.width * 0.04;
       var marginY = box.height * 0.04;
       var x = Math.max(0, box.x - marginX);
@@ -770,6 +532,191 @@
         width: Math.max(1, Math.min(videoW - x, box.width + marginX * 2)),
         height: Math.max(1, Math.min(videoH - y, box.height + marginY * 2))
       };
+    }
+
+    function handleAcceptedFrame(frame) {
+      if (!frame || !frame.transferId) return false;
+      if (!currentTransferId) currentTransferId = frame.transferId;
+      if (frame.transferId !== currentTransferId) {
+        resetTransferState(frame.transferId);
+        statusEl.textContent = 'New transfer';
+        detailEl.textContent = 'Detected transfer ' + frame.transferId + ', resetting decoder state.';
+      }
+
+      var visualKey = frame.transferId + ':' + (frame.gridSlot == null ? 0 : frame.gridSlot) + ':' + frame.symbolIndex;
+      if (seenVisualFrames[visualKey]) {
+        repeatedVisualFrames++;
+        return false;
+      }
+      seenVisualFrames[visualKey] = true;
+      lastAcceptedFrame = frame;
+      acceptedCount++;
+      PAYLOAD_BYTES = frame.payloadBytes || PAYLOAD_BYTES;
+      acceptRaptorFrame(frame, new Uint8Array(frame.packet));
+      return true;
+    }
+
+    function acceptRaptorFrame(frame, packet) {
+      if (!RaptorDecoder || !RaptorEncodingPacket) return;
+      if (!expectedTotal) {
+        expectedTotal = frame.sourceSymbols;
+        initGrid(expectedTotal);
+      }
+      if (frame.sourceSymbols !== expectedTotal) return;
+      if (!raptorDecoder) raptorDecoder = RaptorDecoder.with_defaults(BigInt(frame.transferLength), frame.mtu);
+
+      var packetInfo = getPacketInfo(packet, frame);
+      if (seenPackets[packetInfo.key]) {
+        duplicatePackets++;
+        updateProgress();
+        return;
+      }
+      seenPackets[packetInfo.key] = true;
+      receivedPackets++;
+      lastPacketKind = packetInfo.kind;
+      markPacketCell(packetInfo, frame);
+
+      var decoded = raptorDecoder.add(packet);
+      updateProgress();
+      detailEl.textContent = 'Accepted ' + packetInfo.kind + ' packet ' + receivedPackets + ' / about ' + expectedTotal + ', repair ' + repairPacketCount + ', duplicates ' + duplicatePackets;
+      if (decoded) {
+        markRecoveredCells();
+        finishDecode(decoded).catch(function(err) {
+          statusEl.textContent = 'Verify failed';
+          detailEl.textContent = err.message || String(err);
+        });
+      }
+    }
+
+    function getPacketInfo(packet, frame) {
+      var visualKind = frame.packetIndex < frame.sourceSymbols ? 'source' : 'repair';
+      try {
+        var parsed = RaptorEncodingPacket.deserialize(packet);
+        var sbn = parsed.source_block_number();
+        var esi = parsed.encoding_symbol_id();
+        var key = sbn + ':' + esi;
+        parsed.free();
+        return { key: key, sbn: sbn, esi: esi, visualIndex: frame.packetIndex, kind: visualKind };
+      } catch (err) {
+        return { key: 'visual:' + frame.symbolIndex, sbn: 0, esi: frame.packetIndex, visualIndex: frame.packetIndex, kind: visualKind };
+      }
+    }
+
+    function initGrid(total) {
+      packetStates = new Uint8Array(total);
+      schedulePacketMapDraw();
+      updateProgress();
+    }
+
+    function markPacketCell(packetInfo) {
+      var cellIndex = packetInfo.visualIndex;
+      if (packetInfo.kind === 'source' && cellIndex < packetStates.length) {
+        if (!sourcePacketsSeen[cellIndex]) {
+          sourcePacketsSeen[cellIndex] = true;
+          sourcePacketCount++;
+        }
+        packetStates[cellIndex] = 1;
+      } else if (!repairPacketsSeen[packetInfo.key]) {
+        repairPacketsSeen[packetInfo.key] = true;
+        repairPacketCount++;
+      }
+      schedulePacketMapDraw();
+    }
+
+    function markFailedFrameFromDebug(debug) {
+      if (!debug) return;
+      var reason = [debug.parse2, debug.parse3].filter(Boolean).find(function(value) { return value.indexOf('checksum') === 0; }) || '';
+      if (reason.indexOf('checksum') !== 0) return;
+      var total = Number(debug.parsedSourceSymbols || 0);
+      var packetIndex = Number(debug.parsedPacketIndex);
+      if (!isFinite(total) || total < 1 || !isFinite(packetIndex) || packetIndex < 0 || packetIndex >= total) return;
+      if (!expectedTotal) {
+        expectedTotal = total;
+        initGrid(expectedTotal);
+      }
+      if (packetIndex >= packetStates.length || sourcePacketsSeen[packetIndex] || recoveredSourceSymbols.indexOf(packetIndex) !== -1) return;
+      if (!failedPacketsSeen[packetIndex]) {
+        failedPacketsSeen[packetIndex] = true;
+        failedPacketCount++;
+      }
+      packetStates[packetIndex] = 2;
+      schedulePacketMapDraw();
+      updateProgress();
+    }
+
+    function markRecoveredCells() {
+      recoveredSourceSymbols = [];
+      for (var i = 0; i < expectedTotal; i++) {
+        if (!sourcePacketsSeen[i]) {
+          recoveredSourceSymbols.push(i);
+          if (i < packetStates.length) packetStates[i] = 3;
+        }
+      }
+      schedulePacketMapDraw();
+    }
+
+    function schedulePacketMapDraw() {
+      if (packetMapRaf) return;
+      packetMapRaf = requestAnimationFrame(function() {
+        packetMapRaf = 0;
+        drawPacketMap();
+      });
+    }
+
+    function drawPacketMap() {
+      var rect = packetCanvas.getBoundingClientRect();
+      var dpr = window.devicePixelRatio || 1;
+      var cssW = Math.max(1, Math.round(rect.width || 360));
+      var cssH = Math.max(1, Math.round(rect.height || 180));
+      var pxW = Math.max(1, Math.round(cssW * dpr));
+      var pxH = Math.max(1, Math.round(cssH * dpr));
+      if (packetCanvas.width !== pxW || packetCanvas.height !== pxH) {
+        packetCanvas.width = pxW;
+        packetCanvas.height = pxH;
+      }
+      packetCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      packetCtx.fillStyle = '#10111a';
+      packetCtx.fillRect(0, 0, cssW, cssH);
+      if (!packetStates.length) return;
+
+      var cols = Math.min(160, Math.max(16, Math.ceil(Math.sqrt(packetStates.length * cssW / cssH))));
+      var rows = Math.ceil(packetStates.length / cols);
+      var cellW = cssW / cols;
+      var cellH = cssH / rows;
+      var colors = ['#363950', '#9ae6b4', '#ff7a90', '#ffd166'];
+      for (var i = 0; i < packetStates.length; i++) {
+        var col = i % cols;
+        var row = Math.floor(i / cols);
+        packetCtx.fillStyle = colors[packetStates[i]] || colors[0];
+        packetCtx.fillRect(col * cellW, row * cellH, Math.max(1, cellW - 0.5), Math.max(1, cellH - 0.5));
+      }
+    }
+
+    function updateProgress() {
+      var found = Math.min(receivedPackets, expectedTotal || receivedPackets);
+      var pct = expectedTotal ? Math.round(found / expectedTotal * 100) : 0;
+      progress.style.width = Math.min(100, pct) + '%';
+      progressText.textContent = 'Packet Map: ' + receivedPackets + ' unique / about ' + (expectedTotal || '?') + ' needed';
+      renderSummary();
+    }
+
+    function updateRate() {
+      var now = performance.now();
+      if (now - lastRateTime < 1000) return;
+      var elapsed = (now - lastRateTime) / 1000;
+      var fps = Math.round((scanCount - lastScanCount) / elapsed);
+      var acceptedDelta = acceptedCount - lastAcceptedCount;
+      var effectiveSlots = Math.max(0, completedScans * EXPECTED_GRIDS - repeatedVisualFrames);
+      var success = effectiveSlots ? Math.round(Math.min(1, acceptedCount / effectiveSlots) * 100) : 0;
+      lastPacketRate = acceptedDelta / elapsed;
+      lastVisualRate = lastPacketRate * PAYLOAD_BYTES;
+      lastFps = fps;
+      lastSuccess = success;
+      var topMisses = Object.keys(missStats).sort(function(a, b) { return missStats[b] - missStats[a]; }).slice(0, 3).map(function(key) { return key + ':' + missStats[key]; }).join(', ');
+      rateEl.textContent = 'Dispatch ' + fps + ' fps, signal ' + success + '%, accepted ' + acceptedCount + (topMisses ? ', misses ' + topMisses : '');
+      lastRateTime = now;
+      lastScanCount = scanCount;
+      lastAcceptedCount = acceptedCount;
     }
 
     function recordScanMiss(reason) {
@@ -791,6 +738,16 @@
         roiFallbackLevel = 0;
         detailEl.textContent = 'ROI lost, falling back to full-screen scan...';
       }
+    }
+
+    function unionBbox(a, b) {
+      if (!b) return a;
+      if (!a) return { x: b.x, y: b.y, width: b.width, height: b.height, confidence: b.confidence || 0 };
+      var minX = Math.min(a.x, b.x);
+      var minY = Math.min(a.y, b.y);
+      var maxX = Math.max(a.x + a.width, b.x + b.width);
+      var maxY = Math.max(a.y + a.height, b.y + b.height);
+      return { x: minX, y: minY, width: maxX - minX, height: maxY - minY, confidence: Math.max(a.confidence || 0, b.confidence || 0) };
     }
 
     function drawOverlay() {
@@ -817,211 +774,33 @@
       var scale = Math.min(cssW / vw, cssH / vh);
       var ox = (cssW - vw * scale) / 2;
       var oy = (cssH - vh * scale) / 2;
-
-      if (lastScanSource) {
-        drawVideoRect(lastScanSource, ox, oy, scale, '#ffd166', lastScanSource.roi ? 'scan L' + (lastScanSource.level || 0) : 'full scan');
-      }
-      if (roi) {
-        drawVideoRect(roi, ox, oy, scale, '#72d2ff', 'roi');
-      }
-      if (lastDetectedBox) {
-        drawVideoRect(lastDetectedBox, ox, oy, scale, '#9ae6b4', 'det ' + Math.round(lastBoxConfidence * 100) + '%');
-      }
+      if (lastScanSource) drawVideoRect(lastScanSource, ox, oy, scale, '#ffd166', lastScanSource.roi ? 'scan L' + (lastScanSource.level || 0) : 'full scan');
+      if (roi) drawVideoRect(roi, ox, oy, scale, '#72d2ff', 'roi');
+      if (lastDetectedBox) drawVideoRect(lastDetectedBox, ox, oy, scale, '#9ae6b4', 'det ' + Math.round(lastBoxConfidence * 100) + '%');
     }
 
     function drawVideoRect(box, ox, oy, scale, color, label) {
-      var x = ox + box.x * scale;
-      var y = oy + box.y * scale;
-      var w = box.width * scale;
-      var h = box.height * scale;
-      if (box.sx != null) {
-        x = ox + box.sx * scale;
-        y = oy + box.sy * scale;
-        w = box.sw * scale;
-        h = box.sh * scale;
-      }
+      var x = ox + (box.sx != null ? box.sx : box.x) * scale;
+      var y = oy + (box.sy != null ? box.sy : box.y) * scale;
+      var w = (box.sw != null ? box.sw : box.width) * scale;
+      var h = (box.sh != null ? box.sh : box.height) * scale;
       overlayCtx.save();
       overlayCtx.strokeStyle = color;
       overlayCtx.lineWidth = 2;
       overlayCtx.setLineDash(label && label.indexOf('scan') === 0 ? [6, 4] : []);
       overlayCtx.strokeRect(x, y, w, h);
-      overlayCtx.setLineDash([]);
-      overlayCtx.fillStyle = 'rgba(5, 6, 10, 0.72)';
-      overlayCtx.fillRect(x, Math.max(0, y - 22), Math.min(150, Math.max(58, label.length * 8 + 12)), 20);
       overlayCtx.fillStyle = color;
       overlayCtx.font = '12px -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif';
       overlayCtx.fillText(label, x + 6, Math.max(14, y - 7));
       overlayCtx.restore();
     }
 
-    function acceptRaptorFrame(frame, packet) {
-      if (!RaptorDecoder || !RaptorEncodingPacket) return;
-      if (!expectedTotal) {
-        expectedTotal = frame.sourceSymbols;
-        initGrid(expectedTotal);
-      }
-      if (frame.sourceSymbols !== expectedTotal) return;
-      if (!raptorDecoder) {
-        raptorDecoder = RaptorDecoder.with_defaults(BigInt(frame.transferLength), frame.mtu);
-      }
-
-      var packetInfo = getPacketInfo(packet, frame);
-      if (seenPackets[packetInfo.key]) {
-        duplicatePackets++;
-        updateProgress();
-        return;
-      }
-      seenPackets[packetInfo.key] = true;
-      receivedPackets++;
-      lastPacketKind = packetInfo.kind;
-      markPacketCell(packetInfo, frame);
-
-      var decoded = raptorDecoder.add(packet);
-      updateProgress();
-      detailEl.textContent = 'Accepted ' + packetInfo.kind + ' packet ' + receivedPackets + ' / about ' + expectedTotal + ', repair ' + repairPacketCount + ', duplicates ' + duplicatePackets;
-      if (decoded) {
-        markRecoveredCells();
-        finishDecode(decoded).catch(function(err) {
-        statusEl.textContent = 'Verify failed';
-        detailEl.textContent = err.message;
-      });
-      }
-    }
-
-    function getPacketInfo(packet, frame) {
-      var visualKind = frame.packetIndex < frame.sourceSymbols ? 'source' : 'repair';
-      try {
-        var parsed = RaptorEncodingPacket.deserialize(packet);
-        var sbn = parsed.source_block_number();
-        var esi = parsed.encoding_symbol_id();
-        var key = sbn + ':' + esi;
-        parsed.free();
-        return {
-          key: key,
-          sbn: sbn,
-          esi: esi,
-          visualIndex: frame.packetIndex,
-          kind: visualKind
-        };
-      } catch (err) {
-        return {
-          key: 'visual:' + frame.symbolIndex,
-          sbn: 0,
-          esi: frame.packetIndex,
-          visualIndex: frame.packetIndex,
-          kind: visualKind
-        };
-      }
-    }
-
-    function markPacketCell(packetInfo, frame) {
-      if (!cells.length) return;
-      var cellIndex = packetInfo.visualIndex;
-      if (packetInfo.kind === 'source' && cellIndex < cells.length) {
-        if (!sourcePacketsSeen[cellIndex]) {
-          sourcePacketsSeen[cellIndex] = true;
-          sourcePacketCount++;
-        }
-        cells[cellIndex].className = 'cell ok';
-        cells[cellIndex].title = 'Direct source symbol ' + cellIndex;
-      } else {
-        if (!repairPacketsSeen[packetInfo.key]) {
-          repairPacketsSeen[packetInfo.key] = true;
-          repairPacketCount++;
-        }
-      }
-    }
-
-    function markFailedFrameFromDebug(debug) {
-      if (!debug) return;
-      var reason = [debug.parse2, debug.parse3].filter(Boolean).find(function(nextReason) {
-        return nextReason.indexOf('checksum') === 0;
-      }) || '';
-      if (reason.indexOf('checksum') !== 0) return;
-      var total = Number(debug.parsedSourceSymbols || 0);
-      var packetIndex = Number(debug.parsedPacketIndex);
-      if (!isFinite(total) || total < 1 || !isFinite(packetIndex) || packetIndex < 0 || packetIndex >= total) return;
-      if (!expectedTotal) {
-        expectedTotal = total;
-        initGrid(expectedTotal);
-      }
-      if (packetIndex >= cells.length || sourcePacketsSeen[packetIndex] || recoveredSourceSymbols.indexOf(packetIndex) !== -1) return;
-      if (!failedPacketsSeen[packetIndex]) {
-        failedPacketsSeen[packetIndex] = true;
-        failedPacketCount++;
-      }
-      cells[packetIndex].className = 'cell failed';
-      cells[packetIndex].title = 'Failed checksum for source symbol ' + packetIndex + '; waiting for retry or RaptorQ recovery';
-      updateProgress();
-    }
-
-    function markRecoveredCells() {
-      recoveredSourceSymbols = [];
-      for (var i = 0; i < expectedTotal; i++) {
-        if (!sourcePacketsSeen[i]) {
-          recoveredSourceSymbols.push(i);
-          if (cells[i]) {
-            cells[i].className = 'cell recovered';
-            cells[i].title = 'Recovered by RaptorQ, source symbol ' + i + ' was not directly captured';
-          }
-        }
-      }
-    }
-
-    function initGrid(total) {
-      chunkGrid.innerHTML = '';
-      cells = [];
-      for (var i = 0; i < total; i++) {
-        var div = document.createElement('div');
-        div.className = 'cell';
-        div.textContent = i + 1;
-        chunkGrid.appendChild(div);
-        cells.push(div);
-      }
-      updateProgress();
-    }
-
-    function updateProgress() {
-      var found = Math.min(receivedPackets, expectedTotal || receivedPackets);
-      var pct = expectedTotal ? Math.round(found / expectedTotal * 100) : 0;
-      progress.style.width = Math.min(100, pct) + '%';
-      progressText.textContent = 'Packet Map: ' + receivedPackets + ' unique / about ' + (expectedTotal || '?') + ' needed';
-      renderSummary();
-    }
-
-    function updateRate() {
-      var now = performance.now();
-      if (now - lastRateTime < 1000) return;
-      var elapsed = (now - lastRateTime) / 1000;
-      var fps = Math.round((scanCount - lastScanCount) / elapsed);
-      var acceptedDelta = acceptedCount - lastAcceptedCount;
-      var effectiveScanSlots = Math.max(0, scanCount * EXPECTED_GRIDS - repeatedVisualFrames);
-      var success = effectiveScanSlots ? Math.round(Math.min(1, acceptedCount / effectiveScanSlots) * 100) : 0;
-      lastPacketRate = acceptedDelta / elapsed;
-      lastVisualRate = lastPacketRate * PAYLOAD_BYTES;
-      lastFps = fps;
-      lastSuccess = success;
-      var topMisses = Object.keys(missStats).sort(function(a, b) { return missStats[b] - missStats[a]; }).slice(0, 3).map(function(key) {
-        return key + ':' + missStats[key];
-      }).join(', ');
-      rateEl.textContent = 'Scan ' + fps + ' fps, signal ' + success + '%, accepted ' + acceptedCount + (topMisses ? ', misses ' + topMisses : '');
-      lastRateTime = now;
-      lastScanCount = scanCount;
-      lastAcceptedCount = acceptedCount;
-      renderSummary();
-      renderDiagnostics();
-    }
-
     function renderSummary() {
       var pct = decodedBlob ? 100 : (expectedTotal ? Math.min(99, Math.round(Math.min(receivedPackets, expectedTotal) / expectedTotal * 100)) : 0);
       transferPercent.textContent = pct + '%';
       progress.style.width = pct + '%';
-
-      var packetGoal = expectedTotal || 0;
-      packetText.textContent = receivedPackets + ' unique / ' + (packetGoal || '?') + ' target';
-      if (sourcePacketCount || repairPacketCount) {
-        packetText.textContent += ', ' + sourcePacketCount + ' source';
-      }
+      packetText.textContent = receivedPackets + ' unique / ' + (expectedTotal || '?') + ' target';
+      if (sourcePacketCount || repairPacketCount) packetText.textContent += ', ' + sourcePacketCount + ' source';
 
       var repair = repairPacketCount + ' repair';
       if (failedPacketCount) repair += ', ' + failedPacketCount + ' failed';
@@ -1042,34 +821,35 @@
       }
       signalText.textContent = signalLabel;
 
-      var groups = lastDebug.markerGroups || 0;
       var mode = roi ? 'ROI locked' : 'Full scan';
-      if (groups) mode += ', ' + groups + '-grid';
+      mode += ', ' + countBusyWorkers() + '/' + WORKER_COUNT + ' busy';
       if (lastPacketKind !== '-') mode += ', last ' + lastPacketKind;
       modeText.textContent = mode;
     }
 
     function renderDiagnostics() {
-      var topMisses = Object.keys(missStats).sort(function(a, b) { return missStats[b] - missStats[a]; }).slice(0, 8).map(function(key) {
-        return key + ':' + missStats[key];
-      }).join(', ') || '-';
+      var topMisses = Object.keys(missStats).sort(function(a, b) { return missStats[b] - missStats[a]; }).slice(0, 8).map(function(key) { return key + ':' + missStats[key]; }).join(', ') || '-';
       var scan = lastScanSource ? lastScanSource.sw + 'x' + lastScanSource.sh + (lastScanSource.roi ? ' ROI L' + (lastScanSource.level || 0) : ' full') : '-';
       var roiText = roi ? fmtBox(roi) + ' misses ' + roiMisses : '-';
       var detText = lastDetectedBox ? fmtBox(lastDetectedBox) + ' conf ' + Math.round(lastBoxConfidence * 100) + '%' : '-';
       var frame = lastAcceptedFrame || {};
+      var workerText = workerStates.map(function(state, index) { return 'W' + index + ':' + (state.busy ? 'busy' : 'idle'); }).join(' ');
       var rows = [
-        ['Capture fps', lastFps],
-        ['Scan frames', scanCount],
-        ['Accepted frames', acceptedCount],
+        ['Dispatch fps', lastFps],
+        ['Dispatched frames', scanCount],
+        ['Completed scans', completedScans],
+        ['Accepted grids', acceptedCount],
         ['Success', lastSuccess + '%'],
+        ['Worker pool', workerText],
+        ['Capture skips', droppedCaptureOpportunities],
         ['Last miss', missReason || '-'],
         ['Miss histogram', topMisses],
         ['Scan window', scan],
         ['ROI', roiText],
         ['Detected box', detText],
-        ['Worker pool', WORKER_COUNT + ' slots, relocate every ' + RELOCATE_EVERY + ' frames'],
         ['Worker slot', valueOrDash(lastDebug.worker)],
         ['Homography cache', lastDebug.cache || '-'],
+        ['Fast path', lastDebug.fastPath || '-'],
         ['Worker stage', lastDebug.stage || '-'],
         ['Worker ms', valueOrDash(lastDebug.workerMs)],
         ['Input image', lastDebug.image || '-'],
@@ -1084,6 +864,7 @@
         ['Data bbox', lastDebug.dataBox || '-'],
         ['4-color parse', lastDebug.parse2 || '-'],
         ['8-color parse', lastDebug.parse3 || '-'],
+        ['Transfer ID', currentTransferId || '-'],
         ['Color bits', frame.colorBits ? frame.colorBits + ' bit/cell' : '-'],
         ['Payload bytes', frame.payloadBytes || PAYLOAD_BYTES || '-'],
         ['Packet len', frame.packetLen || '-'],
@@ -1097,7 +878,6 @@
         ['Source packets', sourcePacketCount],
         ['Repair packets', repairPacketCount],
         ['Failed source packets', failedPacketCount],
-        ['Last packet kind', lastPacketKind],
         ['Recovered source', recoveredSourceSymbols.length ? summarizeList(recoveredSourceSymbols) : '-'],
         ['Duplicates', duplicatePackets],
         ['SHA-256', decodedBlob ? 'ok' : 'pending']
@@ -1105,26 +885,6 @@
       diagnostics.innerHTML = '<h2>Diagnostics</h2>' + rows.map(function(row) {
         return '<div class="k">' + escapeHtml(row[0]) + '</div><div class="v">' + escapeHtml(String(row[1])) + '</div>';
       }).join('');
-    }
-
-    function fmtBox(box) {
-      return [box.x, box.y, box.width, box.height].map(function(v) { return Math.round(v); }).join(',');
-    }
-
-    function valueOrDash(value) {
-      return value == null || value === '' ? '-' : value;
-    }
-
-    function summarizeList(values) {
-      if (!values.length) return '-';
-      var shown = values.slice(0, 30).join(',');
-      return shown + (values.length > 30 ? ' ... +' + (values.length - 30) : '');
-    }
-
-    function escapeHtml(value) {
-      return value.replace(/[&<>"']/g, function(ch) {
-        return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch];
-      });
     }
 
     async function finishDecode(packed) {
@@ -1145,41 +905,51 @@
         applyResult.textContent = 'Delta TAR ready. Enter the target code root, then apply files.';
       } else {
         applyDeltaBtn.disabled = true;
-        applyResult.textContent = 'Decoded file is not a TAR delta package.';
+        applyResult.textContent = 'Decoded file is ready for download.';
       }
-      detailEl.textContent = decodedName + ' ready, ' + formatSize(file.bytes.length) + (file.sha256 ? ', SHA-256 ok' : '');
+      statusEl.textContent = 'Complete';
+      detailEl.textContent = decodedName + ' verified and ready.';
       renderSummary();
       renderDiagnostics();
       downloadBtn.click();
     }
 
+    async function parseStream(buf) {
+      if (buf[0] !== 70 || buf[1] !== 71 || buf[2] !== 83 || buf[3] !== 50) throw new Error('Invalid stream header');
+      var version = buf[4] || 1;
+      var flags = buf[5] || 0;
+      var nameLen = readU16(buf, 6);
+      var fileSize = readU32(buf, 8);
+      var hashLen = version >= 3 ? readU32(buf, 12) : 0;
+      var nameStart = version >= 3 ? 48 : 16;
+      var dataStart = nameStart + nameLen;
+      var name = new TextDecoder().decode(buf.slice(nameStart, dataStart)) || 'file.bin';
+      var raw = version >= 4 && (flags & 8) ? buf.slice(dataStart) : buf.slice(dataStart, dataStart + fileSize);
+      var data = version >= 4 && (flags & 8) ? await decompressGzip(raw) : raw;
+      data = data.slice(0, fileSize);
+      var sha256 = hashLen === 32 ? buf.slice(16, 48) : null;
+      return { name: name, bytes: data, sha256: sha256 };
+    }
+
+    async function decompressGzip(bytes) {
+      if (typeof DecompressionStream === 'undefined') throw new Error('This browser cannot decompress gzip streams');
+      return new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'))).arrayBuffer());
+    }
+
     async function applyDeltaPackage() {
       if (!decodedBlob) return;
       var targetRoot = applyTarget.value.trim();
-      if (!targetRoot) {
-        applyResult.textContent = 'Target root is required.';
-        return;
-      }
+      if (!targetRoot) { setApplyResult('Target root is required.', 'err'); return; }
       applyDeltaBtn.disabled = true;
-      applyResult.textContent = 'Applying files...';
+      setApplyResult('Applying files...', '');
       try {
         var url = '/api/delta/apply?targetRoot=' + encodeURIComponent(targetRoot) + '&applyDeletes=' + (applyDeletes.checked ? '1' : '0');
-        var response = await fetch(url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/x-tar' },
-          body: decodedBlob
-        });
+        var response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/x-tar' }, body: decodedBlob });
         var data = await readJsonResponse(response);
         if (!response.ok || !data.ok) throw new Error(data.error || 'Apply failed');
         var result = data.result || {};
         var counts = result.counts || {};
-        var lines = [
-          'Applied to: ' + data.targetRoot,
-          'Copied: ' + (counts.copied || 0),
-          'Deleted: ' + (counts.deleted || 0),
-          'Skipped: ' + (counts.skipped || 0),
-          'Failed: ' + (counts.failed || 0)
-        ];
+        var lines = ['Applied to: ' + data.targetRoot, 'Copied: ' + (counts.copied || 0), 'Deleted: ' + (counts.deleted || 0), 'Skipped: ' + (counts.skipped || 0), 'Failed: ' + (counts.failed || 0)];
         appendApplyList(lines, 'Copied files', result.copied);
         appendApplyList(lines, 'Deleted files', result.deleted);
         appendApplyList(lines, 'Skipped files', result.skipped);
@@ -1192,14 +962,9 @@
       }
     }
 
-    var lastLocks = [];
-
     async function checkFileLocks() {
       var targetRoot = applyTarget.value.trim();
-      if (!targetRoot) {
-        setApplyResult('Target root is required.', 'err');
-        return;
-      }
+      if (!targetRoot) { setApplyResult('Target root is required.', 'err'); return; }
       closeLocksBtn.disabled = true;
       checkLocksBtn.disabled = true;
       setApplyResult('Checking file locks...', '');
@@ -1208,15 +973,10 @@
         var data = await readJsonResponse(response);
         if (!response.ok || !data.ok) throw new Error(data.error || 'Lock check failed');
         lastLocks = data.locks || [];
-        if (!lastLocks.length) {
-          setApplyResult('No locking processes found under ' + data.targetRoot, 'ok');
-          return;
-        }
+        if (!lastLocks.length) { setApplyResult('No locking processes found under ' + data.targetRoot, 'ok'); return; }
         closeLocksBtn.disabled = false;
         var lines = ['Locking processes found: ' + lastLocks.length, ''];
-        lastLocks.slice(0, 120).forEach(function(lock) {
-          lines.push(lock.process + ' pid ' + lock.pid + ' - ' + lock.path);
-        });
+        lastLocks.slice(0, 120).forEach(function(lock) { lines.push(lock.process + ' pid ' + lock.pid + ' - ' + lock.path); });
         if (lastLocks.length > 120) lines.push('... +' + (lastLocks.length - 120) + ' more');
         setApplyResult(lines.join('\n'), 'err');
       } catch (err) {
@@ -1229,29 +989,17 @@
 
     async function closeLockingProcesses() {
       var targetRoot = applyTarget.value.trim();
-      if (!targetRoot) {
-        setApplyResult('Target root is required.', 'err');
-        return;
-      }
-      if (!lastLocks.length) {
-        setApplyResult('No checked locking processes. Run Check File Locks first.', 'err');
-        return;
-      }
+      if (!targetRoot) { setApplyResult('Target root is required.', 'err'); return; }
+      if (!lastLocks.length) { setApplyResult('No checked locking processes. Run Check File Locks first.', 'err'); return; }
       closeLocksBtn.disabled = true;
       setApplyResult('Closing locking processes...', '');
       try {
         var response = await fetch('/api/locks/close', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ targetRoot: targetRoot, locks: lastLocks })
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ targetRoot: targetRoot, locks: lastLocks })
         });
         var data = await readJsonResponse(response);
         if (!response.ok || !data.ok) throw new Error(data.error || 'Close locks failed');
-        var lines = [
-          'Closed: ' + (data.closed || []).length,
-          'Skipped: ' + (data.skipped || []).length,
-          'Failed: ' + (data.failed || []).length
-        ];
+        var lines = ['Closed: ' + (data.closed || []).length, 'Skipped: ' + (data.skipped || []).length, 'Failed: ' + (data.failed || []).length];
         appendApplyList(lines, 'Closed processes', data.closed);
         appendApplyList(lines, 'Skipped processes', data.skipped);
         appendApplyList(lines, 'Failed processes', data.failed);
@@ -1274,11 +1022,8 @@
 
     async function readJsonResponse(response) {
       var text = await response.text();
-      try {
-        return text ? JSON.parse(text) : {};
-      } catch (err) {
-        throw new Error('Backend returned non-JSON: ' + text.slice(0, 140));
-      }
+      try { return text ? JSON.parse(text) : {}; }
+      catch (err) { throw new Error('Backend returned non-JSON: ' + text.slice(0, 140)); }
     }
 
     async function fetchWithTimeout(url, options, timeoutMs) {
@@ -1312,28 +1057,6 @@
       applyResult.className = 'apply-result' + (kind ? ' ' + kind : '');
     }
 
-    async function parseStream(buf) {
-      if (buf[0] !== 70 || buf[1] !== 71 || buf[2] !== 83 || buf[3] !== 50) throw new Error('Invalid stream header');
-      var version = buf[4] || 1;
-      var flags = buf[5] || 0;
-      var nameLen = readU16(buf, 6);
-      var fileSize = readU32(buf, 8);
-      var hashLen = version >= 3 ? readU32(buf, 12) : 0;
-      var nameStart = version >= 3 ? 48 : 16;
-      var dataStart = nameStart + nameLen;
-      var name = new TextDecoder().decode(buf.slice(nameStart, dataStart)) || 'file.bin';
-      var raw = version >= 4 && (flags & 8) ? buf.slice(dataStart) : buf.slice(dataStart, dataStart + fileSize);
-      var data = version >= 4 && (flags & 8) ? await decompressGzip(raw) : raw;
-      data = data.slice(0, fileSize);
-      var sha256 = hashLen === 32 ? buf.slice(16, 48) : null;
-      return { name: name, bytes: data, sha256: sha256 };
-    }
-
-    async function decompressGzip(bytes) {
-      if (typeof DecompressionStream === 'undefined') throw new Error('This browser cannot decompress gzip streams');
-      return new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'))).arrayBuffer());
-    }
-
     function equalBytes(a, b) {
       if (!a || !b || a.length !== b.length) return false;
       var diff = 0;
@@ -1341,20 +1064,17 @@
       return diff === 0;
     }
 
-    function readU16(buf, offset) {
-      return buf[offset] | (buf[offset + 1] << 8);
-    }
-
-    function readU32(buf, offset) {
-      return (buf[offset] | (buf[offset + 1] << 8) | (buf[offset + 2] << 16) | (buf[offset + 3] << 24)) >>> 0;
-    }
-
+    function readU16(buf, offset) { return buf[offset] | (buf[offset + 1] << 8); }
+    function readU32(buf, offset) { return (buf[offset] | (buf[offset + 1] << 8) | (buf[offset + 2] << 16) | (buf[offset + 3] << 24)) >>> 0; }
+    function fmtBox(box) { return [box.x, box.y, box.width, box.height].map(function(value) { return Math.round(value); }).join(','); }
+    function valueOrDash(value) { return value == null || value === '' ? '-' : value; }
+    function summarizeList(values) { var shown = values.slice(0, 30).join(','); return shown + (values.length > 30 ? ' ... +' + (values.length - 30) : ''); }
+    function escapeHtml(value) { return value.replace(/[&<>"']/g, function(ch) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]; }); }
     function formatSize(bytes) {
       if (bytes < 1024) return bytes + ' B';
       if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
       return (bytes / 1024 / 1024).toFixed(2) + ' MB';
     }
-
     function formatDuration(seconds) {
       if (!isFinite(seconds) || seconds < 0) return '-';
       seconds = Math.ceil(seconds);
@@ -1362,12 +1082,12 @@
       var minutes = Math.floor(seconds / 60);
       var rest = seconds % 60;
       if (minutes < 60) return minutes + 'm ' + rest + 's';
-      var hours = Math.floor(minutes / 60);
-      return hours + 'h ' + (minutes % 60) + 'm';
+      return Math.floor(minutes / 60) + 'h ' + (minutes % 60) + 'm';
     }
 
     renderDiagnostics();
     renderSummary();
+    schedulePacketMapDraw();
   </script>
 </body>
 </html>
