@@ -1,11 +1,14 @@
-var TOTAL_COLS = 236;
-var TOTAL_ROWS = 86;
-var DATA_OFFSET_X = 18;
-var DATA_OFFSET_Y = 18;
-var DATA_COLS = 200;
-var DATA_ROWS = 50;
-var HEADER_BYTES = 48;
-var PROTOCOL_VERSION = 8;
+importScripts('../shared/protocol.js');
+
+var P = self.FastGridProtocol;
+var TOTAL_COLS = P.totalCols;
+var TOTAL_ROWS = P.totalRows;
+var DATA_OFFSET_X = P.dataOffsetX;
+var DATA_OFFSET_Y = P.dataOffsetY;
+var DATA_COLS = P.dataCols;
+var DATA_ROWS = P.dataRows;
+var HEADER_BYTES = P.headerBytes;
+var PROTOCOL_VERSION = P.protocolVersion;
 var STREAM_VERSION = 4;
 var FLAG_FOLDER = 4;
 var FLAG_GZIP = 8;
@@ -30,6 +33,8 @@ var packets = [];
 var packetSchedule = [];
 var raptorReady = null;
 var RaptorEncoder = null;
+var transferIdLo = 0;
+var transferIdHi = 0;
 
 self.onmessage = function(event) {
   var msg = event.data;
@@ -82,10 +87,11 @@ async function loadFolder(files) {
 
 async function prepareStream(name, size) {
   await initRaptor();
+  generateTransferId();
 
   var nameBytes = new TextEncoder().encode(name);
   streamHeader = new Uint8Array(48 + nameBytes.length);
-  streamHeader[0] = 70; streamHeader[1] = 71; streamHeader[2] = 83; streamHeader[3] = 50; // FGS2
+  streamHeader[0] = 70; streamHeader[1] = 71; streamHeader[2] = 83; streamHeader[3] = 50;
   streamHeader[4] = STREAM_VERSION;
   streamFlags = sourceKind === 'folder' ? FLAG_FOLDER : 0;
   writeU16(streamHeader, 6, nameBytes.length);
@@ -133,7 +139,8 @@ async function prepareStream(name, size) {
       dataRows: DATA_ROWS,
       colorBits: colorBits,
       raptorq: true,
-      repairPacketsPerBlock: repairPacketsPerBlock
+      repairPacketsPerBlock: repairPacketsPerBlock,
+      transferId: formatTransferId(transferIdHi, transferIdLo)
     }
   });
 }
@@ -157,7 +164,7 @@ async function buildFrame(symbolIndex) {
   if (packet.length > payloadBytes) throw new Error('RaptorQ packet exceeds visual payload');
 
   var frame = new Uint8Array(frameBytes);
-  frame[0] = 70; frame[1] = 71; frame[2] = 70; frame[3] = 50; // FGF2
+  frame[0] = 70; frame[1] = 71; frame[2] = 70; frame[3] = 50;
   frame[4] = PROTOCOL_VERSION;
   frame[5] = colorBits;
   writeU16(frame, 6, 0);
@@ -174,6 +181,8 @@ async function buildFrame(symbolIndex) {
   writeU16(frame, 38, DATA_ROWS);
   writeU32(frame, 40, packetIndex >>> 0);
   writeU32(frame, 44, scheduleIndex >>> 0);
+  writeU32(frame, 48, transferIdLo);
+  writeU32(frame, 52, transferIdHi);
   frame.set(packet, HEADER_BYTES);
 
   self.postMessage({
@@ -197,9 +206,7 @@ function buildPacketSchedule(sourceCount, totalCount) {
   var nextRepair = repairStart;
   for (var i = 0; i < repairStart; i++) {
     schedule.push(i);
-    if ((i + 1) % repairEvery === 0 && nextRepair < totalCount) {
-      schedule.push(nextRepair++);
-    }
+    if ((i + 1) % repairEvery === 0 && nextRepair < totalCount) schedule.push(nextRepair++);
   }
   while (nextRepair < totalCount) schedule.push(nextRepair++);
   return schedule;
@@ -210,10 +217,7 @@ function getFrameBytes(bits) {
 }
 
 function postWorkerError(err) {
-  self.postMessage({
-    type: 'error',
-    message: err && err.message ? err.message : String(err || 'worker error')
-  });
+  self.postMessage({ type: 'error', message: err && err.message ? err.message : String(err || 'worker error') });
 }
 
 async function fillPayloadRange(target, targetOffset, payloadOffset, length) {
@@ -249,12 +253,8 @@ function findSegmentIndex(offset) {
   while (lo <= hi) {
     var mid = (lo + hi) >> 1;
     var segment = payloadSegments[mid];
-    if (segment.offset + segment.length <= offset) {
-      lo = mid + 1;
-    } else {
-      best = mid;
-      hi = mid - 1;
-    }
+    if (segment.offset + segment.length <= offset) lo = mid + 1;
+    else { best = mid; hi = mid - 1; }
   }
   return best;
 }
@@ -262,9 +262,7 @@ function findSegmentIndex(offset) {
 function buildTarSegments(files) {
   var segments = [];
   var offset = 0;
-  files.sort(function(a, b) {
-    return getRelativePath(a).localeCompare(getRelativePath(b));
-  });
+  files.sort(function(a, b) { return getRelativePath(a).localeCompare(getRelativePath(b)); });
 
   files.forEach(function(nextFile) {
     var name = normalizeTarPath(getRelativePath(nextFile));
@@ -328,6 +326,18 @@ function getRelativePath(nextFile) {
 
 function normalizeTarPath(path) {
   return path.replace(/\\/g, '/').replace(/^\/+/, '').replace(/\.\./g, '_') || 'file.bin';
+}
+
+function generateTransferId() {
+  var words = new Uint32Array(2);
+  crypto.getRandomValues(words);
+  transferIdLo = words[0] >>> 0;
+  transferIdHi = words[1] >>> 0;
+  if (!transferIdLo && !transferIdHi) transferIdLo = 1;
+}
+
+function formatTransferId(hi, lo) {
+  return hi.toString(16).padStart(8, '0') + lo.toString(16).padStart(8, '0');
 }
 
 function writeString(buf, offset, length, text) {
