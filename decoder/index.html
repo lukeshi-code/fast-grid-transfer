@@ -69,6 +69,8 @@
       gap: 6px 10px; font-size: 0.78rem;
     }
     .diag h2 { grid-column: 1 / -1; font-size: 0.9rem; margin: 0 0 4px; }
+    .diag .section { grid-column: 1 / -1; color: var(--accent); font-weight: 700; margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.08); }
+    .diag .section:first-of-type { margin-top: 0; padding-top: 0; border-top: 0; }
     .diag .k { color: var(--dim); }
     .diag .v { color: var(--text); text-align: right; max-width: 220px; overflow-wrap: anywhere; }
     .progress { height: 10px; border-radius: 5px; overflow: hidden; background: #10111a; margin-top: 10px; border: 1px solid var(--border); }
@@ -165,11 +167,14 @@
     var WORKER_COUNT = 2;
     var RELOCATE_EVERY = 8;
     var EXPECTED_GRIDS = 2;
+    var MAX_QUEUED_SCANS = 10;
+    var CAPTURE_FPS_LIMIT = 33;
     var ROI_SCAN_MAX_WIDTH = 1920;
     var FULL_SCAN_MAX_WIDTH = 1920;
     var workers = [];
     var workerStates = [];
     var nextWorkerHint = 0;
+    var scanQueue = [];
 
     var stream = null;
     var canvas = document.createElement('canvas');
@@ -177,14 +182,16 @@
     ctx.imageSmoothingEnabled = false;
     var raf = null;
     var scanScheduled = false;
+    var lastCaptureAt = 0;
     var decodedBlob = null;
     var decodedName = 'file.bin';
 
     var PAYLOAD_BYTES = 3400;
     var scanCount = 0;
+    var capturedFrames = 0;
     var acceptedCount = 0;
     var completedScans = 0;
-    var droppedCaptureOpportunities = 0;
+    var droppedQueuedScans = 0;
     var seenPackets = Object.create(null);
     var seenVisualFrames = Object.create(null);
     var expectedTotal = 0;
@@ -221,9 +228,13 @@
     var lastDebug = {};
     var lastAcceptedFrame = null;
     var lastRateTime = performance.now();
+    var lastCaptureCount = 0;
     var lastScanCount = 0;
+    var lastCompletedCount = 0;
     var lastAcceptedCount = 0;
+    var lastCaptureFps = 0;
     var lastFps = 0;
+    var lastCompletedFps = 0;
     var lastSuccess = 0;
     var lastPacketRate = 0;
     var lastVisualRate = 0;
@@ -258,6 +269,7 @@
         state.scan = null;
         detailEl.textContent = err.message || 'Worker error';
         lastDebug = { stage: 'worker-error', error: err.message || 'Worker error', worker: workerIndex };
+        dispatchQueuedScans();
         scheduleScan();
       };
     }
@@ -307,6 +319,7 @@
       updateRate();
       renderDiagnostics();
       renderSummary();
+      dispatchQueuedScans();
       scheduleScan();
     }
 
@@ -324,7 +337,7 @@
         startBtn.disabled = true;
         stopBtn.disabled = false;
         statusEl.textContent = 'Capturing';
-        detailEl.textContent = 'Looking for Fast Grid frames...';
+        detailEl.textContent = '';
         scheduleScan();
       } catch (err) {
         statusEl.textContent = 'Capture failed';
@@ -353,6 +366,7 @@
       }
       video.srcObject = null;
       workerStates.forEach(function(state) { state.scan = null; });
+      scanQueue = [];
       drawOverlay();
       startBtn.disabled = false;
       stopBtn.disabled = true;
@@ -365,12 +379,17 @@
       decodedBlob = null;
       decodedName = 'file.bin';
       scanCount = 0;
+      capturedFrames = 0;
       completedScans = 0;
       acceptedCount = 0;
-      droppedCaptureOpportunities = 0;
+      droppedQueuedScans = 0;
       lastRateTime = performance.now();
+      lastCaptureAt = 0;
+      lastCaptureCount = 0;
       lastScanCount = 0;
+      lastCompletedCount = 0;
       lastAcceptedCount = 0;
+      lastCaptureFps = 0;
       roi = null;
       roiMisses = 0;
       roiFallbackLevel = 0;
@@ -382,6 +401,7 @@
       lastDebug = {};
       lastAcceptedFrame = null;
       lastFps = 0;
+      lastCompletedFps = 0;
       lastSuccess = 0;
       lastPacketRate = 0;
       lastVisualRate = 0;
@@ -392,7 +412,7 @@
       applyDeltaBtn.disabled = true;
       applyResult.textContent = 'Waiting for a decoded delta TAR.';
       statusEl.textContent = 'Idle';
-      detailEl.textContent = 'Waiting for screen capture.';
+      detailEl.textContent = '';
       schedulePacketMapDraw();
       renderDiagnostics();
       renderSummary();
@@ -432,13 +452,13 @@
     function scanFrame() {
       scanScheduled = false;
       if (!stream || decodedBlob) return;
-
-      var workerIndex = findIdleWorker();
-      if (workerIndex < 0) {
-        droppedCaptureOpportunities++;
+      var now = performance.now();
+      var minCaptureInterval = 1000 / CAPTURE_FPS_LIMIT;
+      if (lastCaptureAt && now - lastCaptureAt < minCaptureInterval) {
         scheduleScan();
         return;
       }
+      lastCaptureAt = now;
 
       var vw = video.videoWidth;
       var vh = video.videoHeight;
@@ -458,23 +478,47 @@
       ctx.drawImage(video, source.sx, source.sy, source.sw, source.sh, 0, 0, targetW, targetH);
       var image = ctx.getImageData(0, 0, targetW, targetH);
 
-      scanCount++;
-      var frameSeq = scanCount;
-      var shouldRelocate = !roi || (frameSeq % RELOCATE_EVERY === 1);
+      capturedFrames++;
+      var frameSeq = capturedFrames;
       var scan = { sx: source.sx, sy: source.sy, sw: source.sw, sh: source.sh, scale: scale, roi: source.roi, level: source.level || 0, frameSeq: frameSeq };
       lastScanSource = source;
+      enqueueScan({ image: image, scan: scan });
+      dispatchQueuedScans();
+      drawOverlay();
+      updateRate();
+      scheduleScan();
+    }
 
+    function enqueueScan(item) {
+      scanQueue.push(item);
+      while (scanQueue.length > MAX_QUEUED_SCANS) {
+        scanQueue.shift();
+        droppedQueuedScans++;
+      }
+    }
+
+    function dispatchQueuedScans() {
+      if (!stream || decodedBlob) return;
+      var workerIndex = findIdleWorker();
+      while (workerIndex >= 0 && scanQueue.length) {
+        dispatchScanToWorker(scanQueue.shift(), workerIndex);
+        workerIndex = findIdleWorker();
+      }
+    }
+
+    function dispatchScanToWorker(item, workerIndex) {
       var state = workerStates[workerIndex];
+      var image = item.image;
+      var scan = item.scan;
+      scanCount++;
+      var shouldRelocate = !roi || (scan.frameSeq % RELOCATE_EVERY === 1);
       state.busy = true;
-      state.frameSeq = frameSeq;
+      state.frameSeq = scan.frameSeq;
       state.scan = scan;
       state.startedAt = performance.now();
       nextWorkerHint = (workerIndex + 1) % WORKER_COUNT;
 
-      state.worker.postMessage({ type: 'frame', image: image, frameSeq: frameSeq, relocate: shouldRelocate }, [image.data.buffer]);
-      drawOverlay();
-      updateRate();
-      scheduleScan();
+      state.worker.postMessage({ type: 'frame', image: image, frameSeq: scan.frameSeq, relocate: shouldRelocate }, [image.data.buffer]);
     }
 
     function findIdleWorker() {
@@ -540,7 +584,7 @@
       if (frame.transferId !== currentTransferId) {
         resetTransferState(frame.transferId);
         statusEl.textContent = 'New transfer';
-        detailEl.textContent = 'Detected transfer ' + frame.transferId + ', resetting decoder state.';
+        detailEl.textContent = '';
       }
 
       var visualKey = frame.transferId + ':' + (frame.gridSlot == null ? 0 : frame.gridSlot) + ':' + frame.symbolIndex;
@@ -569,6 +613,7 @@
       if (seenPackets[packetInfo.key]) {
         duplicatePackets++;
         updateProgress();
+        updateStableDetail();
         return;
       }
       seenPackets[packetInfo.key] = true;
@@ -578,7 +623,7 @@
 
       var decoded = raptorDecoder.add(packet);
       updateProgress();
-      detailEl.textContent = 'Accepted ' + packetInfo.kind + ' packet ' + receivedPackets + ' / about ' + expectedTotal + ', repair ' + repairPacketCount + ', duplicates ' + duplicatePackets;
+      updateStableDetail();
       if (decoded) {
         markRecoveredCells();
         finishDecode(decoded).catch(function(err) {
@@ -586,6 +631,10 @@
           detailEl.textContent = err.message || String(err);
         });
       }
+    }
+
+    function updateStableDetail() {
+      if (!decodedBlob) detailEl.textContent = '';
     }
 
     function getPacketInfo(packet, frame) {
@@ -704,18 +753,24 @@
       var now = performance.now();
       if (now - lastRateTime < 1000) return;
       var elapsed = (now - lastRateTime) / 1000;
+      var captureFps = Math.round((capturedFrames - lastCaptureCount) / elapsed);
       var fps = Math.round((scanCount - lastScanCount) / elapsed);
+      var completedFps = Math.round((completedScans - lastCompletedCount) / elapsed);
       var acceptedDelta = acceptedCount - lastAcceptedCount;
       var effectiveSlots = Math.max(0, completedScans * EXPECTED_GRIDS - repeatedVisualFrames);
       var success = effectiveSlots ? Math.round(Math.min(1, acceptedCount / effectiveSlots) * 100) : 0;
       lastPacketRate = acceptedDelta / elapsed;
       lastVisualRate = lastPacketRate * PAYLOAD_BYTES;
+      lastCaptureFps = captureFps;
       lastFps = fps;
+      lastCompletedFps = completedFps;
       lastSuccess = success;
       var topMisses = Object.keys(missStats).sort(function(a, b) { return missStats[b] - missStats[a]; }).slice(0, 3).map(function(key) { return key + ':' + missStats[key]; }).join(', ');
-      rateEl.textContent = 'Dispatch ' + fps + ' fps, signal ' + success + '%, accepted ' + acceptedCount + (topMisses ? ', misses ' + topMisses : '');
+      rateEl.textContent = 'Capture ' + captureFps + ' fps, dispatch ' + fps + ' fps, signal ' + success + '%, accepted ' + acceptedCount + (topMisses ? ', misses ' + topMisses : '');
       lastRateTime = now;
+      lastCaptureCount = capturedFrames;
       lastScanCount = scanCount;
+      lastCompletedCount = completedScans;
       lastAcceptedCount = acceptedCount;
     }
 
@@ -730,13 +785,12 @@
       roiMisses++;
       if (roiMisses === 3 || roiMisses === 6 || roiMisses === 9) {
         roiFallbackLevel = Math.min(3, roiFallbackLevel + 1);
-        detailEl.textContent = 'ROI expanding, level ' + roiFallbackLevel + ', last miss: ' + reason;
       }
       if (roiMisses >= 16) {
         roi = null;
         roiMisses = 0;
         roiFallbackLevel = 0;
-        detailEl.textContent = 'ROI lost, falling back to full-screen scan...';
+        detailEl.textContent = '';
       }
     }
 
@@ -834,66 +888,85 @@
       var detText = lastDetectedBox ? fmtBox(lastDetectedBox) + ' conf ' + Math.round(lastBoxConfidence * 100) + '%' : '-';
       var frame = lastAcceptedFrame || {};
       var workerText = workerStates.map(function(state, index) { return 'W' + index + ':' + (state.busy ? 'busy' : 'idle'); }).join(' ');
-      var rows = [
-        ['Dispatch fps', lastFps],
-        ['Dispatched frames', scanCount],
-        ['Completed scans', completedScans],
-        ['Accepted grids', acceptedCount],
-        ['Success', lastSuccess + '%'],
-        ['Worker pool', workerText],
-        ['Capture skips', droppedCaptureOpportunities],
-        ['Last miss', missReason || '-'],
-        ['Miss histogram', topMisses],
-        ['Scan window', scan],
-        ['ROI', roiText],
-        ['Detected box', detText],
-        ['Worker slot', valueOrDash(lastDebug.worker)],
-        ['Homography cache', lastDebug.cache || '-'],
-        ['Fast path', lastDebug.fastPath || '-'],
-        ['Worker stage', lastDebug.stage || '-'],
-        ['Worker ms', valueOrDash(lastDebug.workerMs)],
-        ['Input image', lastDebug.image || '-'],
-        ['Protocol', lastDebug.protocol || '-'],
-        ['Geometry', lastDebug.geometry || '-'],
-        ['AprilTag found', valueOrDash(lastDebug.apriltagFound)],
-        ['AprilTag ids', lastDebug.apriltagIds || '-'],
-        ['Marker groups', valueOrDash(lastDebug.markerGroups)],
-        ['Missing tags', lastDebug.missingMarkers || '-'],
-        ['Cell px', lastDebug.cellPx || '-'],
-        ['Grid bbox', lastDebug.bbox || '-'],
-        ['Data bbox', lastDebug.dataBox || '-'],
-        ['4-color parse', lastDebug.parse2 || '-'],
-        ['8-color parse', lastDebug.parse3 || '-'],
-        ['Transfer ID', currentTransferId || '-'],
-        ['Color bits', frame.colorBits ? frame.colorBits + ' bit/cell' : '-'],
-        ['Payload bytes', frame.payloadBytes || PAYLOAD_BYTES || '-'],
-        ['Packet len', frame.packetLen || '-'],
-        ['Packet index', frame.packetIndex != null ? frame.packetIndex : '-'],
-        ['Grid slot', frame.gridSlot != null ? frame.gridSlot : '-'],
-        ['Source symbols', frame.sourceSymbols || expectedTotal || '-'],
-        ['Cycle symbols', frame.cycleSymbols || '-'],
-        ['RaptorQ mtu', frame.mtu || '-'],
-        ['Repairs/block', frame.repairPacketsPerBlock || '-'],
-        ['Unique packets', receivedPackets],
-        ['Source packets', sourcePacketCount],
-        ['Repair packets', repairPacketCount],
-        ['Failed source packets', failedPacketCount],
-        ['Recovered source', recoveredSourceSymbols.length ? summarizeList(recoveredSourceSymbols) : '-'],
-        ['Duplicates', duplicatePackets],
-        ['SHA-256', decodedBlob ? 'ok' : 'pending']
+      var sections = [
+        ['Transfer', [
+          ['Success', lastSuccess + '%'],
+          ['Accepted grids', acceptedCount],
+          ['Unique packets', receivedPackets],
+          ['Duplicates', duplicatePackets],
+          ['Last miss', missReason || '-'],
+          ['Miss histogram', topMisses]
+        ]],
+        ['Capture Queue', [
+          ['Capture fps', lastCaptureFps],
+          ['Capture cap', CAPTURE_FPS_LIMIT + ' fps'],
+          ['Dispatch fps', lastFps],
+          ['Completed fps', lastCompletedFps],
+          ['Queue backlog', scanQueue.length + ' / ' + MAX_QUEUED_SCANS],
+          ['Queue drops', droppedQueuedScans],
+          ['Captured frames', capturedFrames],
+          ['Dispatched frames', scanCount],
+          ['Completed scans', completedScans]
+        ]],
+        ['Worker', [
+          ['Worker pool', workerText],
+          ['Worker slot', valueOrDash(lastDebug.worker)],
+          ['Worker stage', lastDebug.stage || '-'],
+          ['Worker ms', valueOrDash(lastDebug.workerMs)],
+          ['Fast path', lastDebug.fastPath || '-'],
+          ['Homography cache', lastDebug.cache || '-']
+        ]],
+        ['Vision', [
+          ['Scan window', scan],
+          ['ROI', roiText],
+          ['Detected box', detText],
+          ['Input image', lastDebug.image || '-'],
+          ['AprilTag found', valueOrDash(lastDebug.apriltagFound)],
+          ['AprilTag ids', lastDebug.apriltagIds || '-'],
+          ['Marker groups', valueOrDash(lastDebug.markerGroups)],
+          ['Missing tags', lastDebug.missingMarkers || '-'],
+          ['Cell px', lastDebug.cellPx || '-'],
+          ['Grid bbox', lastDebug.bbox || '-'],
+          ['Data bbox', lastDebug.dataBox || '-'],
+          ['4-color parse', lastDebug.parse2 || '-'],
+          ['8-color parse', lastDebug.parse3 || '-']
+        ]],
+        ['Protocol', [
+          ['Protocol', lastDebug.protocol || '-'],
+          ['Geometry', lastDebug.geometry || '-'],
+          ['Transfer ID', currentTransferId || '-'],
+          ['Color bits', frame.colorBits ? frame.colorBits + ' bit/cell' : '-'],
+          ['Payload bytes', frame.payloadBytes || PAYLOAD_BYTES || '-'],
+          ['Packet len', frame.packetLen || '-'],
+          ['Packet index', frame.packetIndex != null ? frame.packetIndex : '-'],
+          ['Grid slot', frame.gridSlot != null ? frame.gridSlot : '-'],
+          ['Source symbols', frame.sourceSymbols || expectedTotal || '-'],
+          ['Cycle symbols', frame.cycleSymbols || '-']
+        ]],
+        ['Recovery', [
+          ['RaptorQ mtu', frame.mtu || '-'],
+          ['Repairs/block', frame.repairPacketsPerBlock || '-'],
+          ['Source packets', sourcePacketCount],
+          ['Repair packets', repairPacketCount],
+          ['Failed source packets', failedPacketCount],
+          ['Recovered source', recoveredSourceSymbols.length ? summarizeList(recoveredSourceSymbols) : '-'],
+          ['SHA-256', decodedBlob ? 'ok' : 'pending']
+        ]]
       ];
-      diagnostics.innerHTML = '<h2>Diagnostics</h2>' + rows.map(function(row) {
-        return '<div class="k">' + escapeHtml(row[0]) + '</div><div class="v">' + escapeHtml(String(row[1])) + '</div>';
+      diagnostics.innerHTML = '<h2>Diagnostics</h2>' + sections.map(function(section) {
+        return '<div class="section">' + escapeHtml(section[0]) + '</div>' + section[1].map(function(row) {
+          return '<div class="k">' + escapeHtml(row[0]) + '</div><div class="v">' + escapeHtml(String(row[1])) + '</div>';
+        }).join('');
       }).join('');
     }
 
     async function finishDecode(packed) {
       stopCapture();
       statusEl.textContent = 'Complete';
-      detailEl.textContent = 'Rebuilding stream...';
+      detailEl.textContent = '';
       var file = await parseStream(packed);
       if (file.sha256) {
-        detailEl.textContent = 'Verifying SHA-256...';
+        detailEl.textContent = '';
         var digest = new Uint8Array(await crypto.subtle.digest('SHA-256', file.bytes));
         if (!equalBytes(digest, file.sha256)) throw new Error('SHA-256 mismatch; transfer is not complete/correct');
       }
@@ -908,7 +981,7 @@
         applyResult.textContent = 'Decoded file is ready for download.';
       }
       statusEl.textContent = 'Complete';
-      detailEl.textContent = decodedName + ' verified and ready.';
+      detailEl.textContent = '';
       renderSummary();
       renderDiagnostics();
       downloadBtn.click();
