@@ -61,6 +61,7 @@
     .quick-item { border: 1px solid rgba(255,255,255,0.08); border-radius: 6px; padding: 8px; background: rgba(0,0,0,0.13); min-height: 58px; }
     .quick-item span { color: var(--dim); display: block; font-size: 0.72rem; margin-bottom: 4px; }
     .quick-item strong { color: var(--text); display: block; font-size: 0.88rem; line-height: 1.3; overflow-wrap: anywhere; }
+    #speed-text { white-space: pre-line; }
     .advanced { margin-top: 10px; color: var(--dim); font-size: 0.86rem; }
     .advanced summary { cursor: pointer; color: var(--accent); user-select: none; }
     .diag {
@@ -238,6 +239,9 @@
     var lastSuccess = 0;
     var lastPacketRate = 0;
     var lastVisualRate = 0;
+    var transferStartedAt = 0;
+    var averagePacketRate = 0;
+    var averageVisualRate = 0;
     var lastLocks = [];
 
     startBtn.addEventListener('click', startCapture);
@@ -405,6 +409,9 @@
       lastSuccess = 0;
       lastPacketRate = 0;
       lastVisualRate = 0;
+      transferStartedAt = 0;
+      averagePacketRate = 0;
+      averageVisualRate = 0;
       progress.style.width = '0%';
       progressText.textContent = 'Packet Map';
       rateEl.textContent = 'Green = received, red = failed, yellow = recovered by RaptorQ';
@@ -436,6 +443,9 @@
       failedPacketCount = 0;
       recoveredSourceSymbols = [];
       lastPacketKind = '-';
+      transferStartedAt = 0;
+      averagePacketRate = 0;
+      averageVisualRate = 0;
       if (raptorDecoder) {
         try { raptorDecoder.free(); } catch (_) {}
       }
@@ -617,6 +627,7 @@
         return;
       }
       seenPackets[packetInfo.key] = true;
+      if (!transferStartedAt) transferStartedAt = performance.now();
       receivedPackets++;
       lastPacketKind = packetInfo.kind;
       markPacketCell(packetInfo, frame);
@@ -761,6 +772,11 @@
       var success = effectiveSlots ? Math.round(Math.min(1, acceptedCount / effectiveSlots) * 100) : 0;
       lastPacketRate = acceptedDelta / elapsed;
       lastVisualRate = lastPacketRate * PAYLOAD_BYTES;
+      if (transferStartedAt && receivedPackets) {
+        var transferElapsed = Math.max(0.001, (now - transferStartedAt) / 1000);
+        averagePacketRate = receivedPackets / transferElapsed;
+        averageVisualRate = averagePacketRate * PAYLOAD_BYTES;
+      }
       lastCaptureFps = captureFps;
       lastFps = fps;
       lastCompletedFps = completedFps;
@@ -862,7 +878,9 @@
       if (recoveredSourceSymbols.length) repair += ', ' + recoveredSourceSymbols.length + ' recovered';
       repairText.textContent = repair;
 
-      speedText.textContent = lastPacketRate ? (lastPacketRate.toFixed(1) + ' packets/s, ' + formatSize(lastVisualRate) + '/s') : '-';
+      speedText.textContent = lastPacketRate
+        ? ('Now ' + formatRate(lastPacketRate, lastVisualRate) + '\nAvg ' + formatRate(averagePacketRate, averageVisualRate))
+        : '-';
       var remaining = expectedTotal ? Math.max(0, expectedTotal - receivedPackets) : 0;
       etaText.textContent = remaining && lastPacketRate > 0 ? formatDuration(remaining / lastPacketRate) : (decodedBlob ? 'Done' : '-');
 
@@ -893,6 +911,8 @@
           ['Success', lastSuccess + '%'],
           ['Accepted grids', acceptedCount],
           ['Unique packets', receivedPackets],
+          ['Live speed', lastPacketRate ? formatRate(lastPacketRate, lastVisualRate) : '-'],
+          ['Average speed', averagePacketRate ? formatRate(averagePacketRate, averageVisualRate) : '-'],
           ['Duplicates', duplicatePackets],
           ['Last miss', missReason || '-'],
           ['Miss histogram', topMisses]
@@ -1147,6 +1167,9 @@
       if (bytes < 1024) return bytes + ' B';
       if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
       return (bytes / 1024 / 1024).toFixed(2) + ' MB';
+    }
+    function formatRate(packetRate, byteRate) {
+      return packetRate.toFixed(1) + ' packets/s, ' + formatSize(byteRate) + '/s';
     }
     function formatDuration(seconds) {
       if (!isFinite(seconds) || seconds < 0) return '-';
