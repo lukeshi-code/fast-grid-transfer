@@ -169,7 +169,9 @@
     var RELOCATE_EVERY = 8;
     var EXPECTED_GRIDS = 2;
     var MAX_QUEUED_SCANS = 10;
-    var CAPTURE_FPS_LIMIT = 33;
+    var CAPTURE_FPS_LIMIT = 60;
+    var RECENT_VISUAL_LIMIT = 512;
+    var VERIFIED_FINGERPRINT_LIMIT = 128;
     var ROI_SCAN_MAX_WIDTH = 1920;
     var FULL_SCAN_MAX_WIDTH = 1920;
     var workers = [];
@@ -182,6 +184,7 @@
     var ctx = canvas.getContext('2d', { willReadFrequently: true });
     ctx.imageSmoothingEnabled = false;
     var raf = null;
+    var scanCallbackType = '';
     var scanScheduled = false;
     var lastCaptureAt = 0;
     var decodedBlob = null;
@@ -193,8 +196,11 @@
     var acceptedCount = 0;
     var completedScans = 0;
     var droppedQueuedScans = 0;
+    var coalescedCaptureFrames = 0;
     var seenPackets = Object.create(null);
-    var seenVisualFrames = Object.create(null);
+    var recentVisualFrames = new Map();
+    var verifiedFingerprints = new Map();
+    var pendingFingerprints = new Map();
     var expectedTotal = 0;
     var packetStates = new Uint8Array(0);
     var packetMapRaf = 0;
@@ -212,6 +218,12 @@
     var receivedPackets = 0;
     var duplicatePackets = 0;
     var repeatedVisualFrames = 0;
+    var gridSlotStats = [
+      { success: 0, failure: 0 },
+      { success: 0, failure: 0 }
+    ];
+    var topOnlyScans = 0;
+    var bottomOnlyScans = 0;
     var sourcePacketsSeen = Object.create(null);
     var repairPacketsSeen = Object.create(null);
     var failedPacketsSeen = Object.create(null);
@@ -269,8 +281,11 @@
       workerStates.push(state);
       worker.onmessage = function(event) { handleWorkerMessage(event.data, workerIndex); };
       worker.onerror = function(err) {
+        var failedScan = state.scan;
         state.busy = false;
         state.scan = null;
+        if (failedScan) recordGridSlotResult([]);
+        resolveFingerprintScan(failedScan, false);
         detailEl.textContent = err.message || 'Worker error';
         lastDebug = { stage: 'worker-error', error: err.message || 'Worker error', worker: workerIndex };
         dispatchQueuedScans();
@@ -285,7 +300,6 @@
       state.scan = null;
       completedScans++;
 
-      var accepted = 0;
       var roiBox = null;
       var roiSlots = [];
       lastDebug = msg.debug || {};
@@ -295,12 +309,12 @@
       if (msg.type === 'frames') {
         for (var i = 0; i < msg.frames.length; i++) {
           var frame = msg.frames[i];
-          if (handleAcceptedFrame(frame)) accepted++;
+          handleAcceptedFrame(frame);
           roiBox = unionBbox(roiBox, frame.bbox);
           if (frame.gridSlot != null && roiSlots.indexOf(frame.gridSlot) === -1) roiSlots.push(frame.gridSlot);
         }
       } else if (msg.type === 'frame' && msg.frame) {
-        if (handleAcceptedFrame(msg.frame)) accepted++;
+        handleAcceptedFrame(msg.frame);
         roiBox = msg.frame.bbox;
         if (msg.frame.gridSlot != null) roiSlots.push(msg.frame.gridSlot);
       } else if (msg.type === 'miss') {
@@ -311,13 +325,15 @@
         recordScanMiss('worker-error');
       }
 
+      recordGridSlotResult(roiSlots);
       if (roiSlots.length >= EXPECTED_GRIDS && roiBox && scan) {
         updateRoiFromWorker(roiBox, roiSlots, scan);
-      } else if (accepted > 0) {
+      } else if (roiSlots.length > 0) {
         handleScanMiss('partial-grid');
       } else if (roi) {
         handleScanMiss('batch');
       }
+      resolveFingerprintScan(scan, roiSlots.length >= EXPECTED_GRIDS);
 
       drawOverlay();
       updateRate();
@@ -332,7 +348,7 @@
       try {
         await initRaptor();
         stream = await navigator.mediaDevices.getDisplayMedia({
-          video: { width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30, max: 60 } },
+          video: { width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 60, max: 60 } },
           audio: false
         });
         video.srcObject = stream;
@@ -361,8 +377,15 @@
     }
 
     function stopCapture() {
-      if (raf) cancelAnimationFrame(raf);
+      if (raf != null) {
+        if (scanCallbackType === 'video' && typeof video.cancelVideoFrameCallback === 'function') {
+          video.cancelVideoFrameCallback(raf);
+        } else {
+          cancelAnimationFrame(raf);
+        }
+      }
       raf = null;
+      scanCallbackType = '';
       scanScheduled = false;
       if (stream) {
         stream.getTracks().forEach(function(track) { track.stop(); });
@@ -371,6 +394,7 @@
       video.srcObject = null;
       workerStates.forEach(function(state) { state.scan = null; });
       scanQueue = [];
+      pendingFingerprints = new Map();
       drawOverlay();
       startBtn.disabled = false;
       stopBtn.disabled = true;
@@ -387,6 +411,9 @@
       completedScans = 0;
       acceptedCount = 0;
       droppedQueuedScans = 0;
+      coalescedCaptureFrames = 0;
+      verifiedFingerprints = new Map();
+      pendingFingerprints = new Map();
       lastRateTime = performance.now();
       lastCaptureAt = 0;
       lastCaptureCount = 0;
@@ -429,12 +456,18 @@
     function resetTransferState(nextTransferId) {
       currentTransferId = nextTransferId || '';
       seenPackets = Object.create(null);
-      seenVisualFrames = Object.create(null);
+      recentVisualFrames = new Map();
       expectedTotal = 0;
       packetStates = new Uint8Array(0);
       receivedPackets = 0;
       duplicatePackets = 0;
       repeatedVisualFrames = 0;
+      gridSlotStats = [
+        { success: 0, failure: 0 },
+        { success: 0, failure: 0 }
+      ];
+      topOnlyScans = 0;
+      bottomOnlyScans = 0;
       sourcePacketsSeen = Object.create(null);
       repairPacketsSeen = Object.create(null);
       failedPacketsSeen = Object.create(null);
@@ -456,15 +489,24 @@
     function scheduleScan() {
       if (!stream || decodedBlob || scanScheduled) return;
       scanScheduled = true;
-      raf = requestAnimationFrame(scanFrame);
+      if (typeof video.requestVideoFrameCallback === 'function') {
+        scanCallbackType = 'video';
+        raf = video.requestVideoFrameCallback(scanFrame);
+      } else {
+        scanCallbackType = 'animation';
+        raf = requestAnimationFrame(scanFrame);
+      }
     }
 
-    function scanFrame() {
+    function scanFrame(now) {
+      var callbackType = scanCallbackType;
+      raf = null;
+      scanCallbackType = '';
       scanScheduled = false;
       if (!stream || decodedBlob) return;
-      var now = performance.now();
+      now = typeof now === 'number' ? now : performance.now();
       var minCaptureInterval = 1000 / CAPTURE_FPS_LIMIT;
-      if (lastCaptureAt && now - lastCaptureAt < minCaptureInterval) {
+      if (callbackType !== 'video' && lastCaptureAt && now - lastCaptureAt < minCaptureInterval) {
         scheduleScan();
         return;
       }
@@ -490,7 +532,17 @@
 
       capturedFrames++;
       var frameSeq = capturedFrames;
-      var scan = { sx: source.sx, sy: source.sy, sw: source.sw, sh: source.sh, scale: scale, roi: source.roi, level: source.level || 0, frameSeq: frameSeq };
+      var scan = {
+        sx: source.sx,
+        sy: source.sy,
+        sw: source.sw,
+        sh: source.sh,
+        scale: scale,
+        roi: source.roi,
+        level: source.level || 0,
+        frameSeq: frameSeq,
+        fingerprint: source.roi ? fingerprintImage(image) : ''
+      };
       lastScanSource = source;
       enqueueScan({ image: image, scan: scan });
       dispatchQueuedScans();
@@ -500,11 +552,85 @@
     }
 
     function enqueueScan(item) {
+      var fingerprint = item.scan && item.scan.fingerprint;
+      if (fingerprint && verifiedFingerprints.has(fingerprint)) {
+        coalescedCaptureFrames++;
+        return;
+      }
+      if (fingerprint && pendingFingerprints.has(fingerprint)) {
+        pendingFingerprints.get(fingerprint).backup = item;
+        coalescedCaptureFrames++;
+        return;
+      }
+      if (fingerprint) {
+        pendingFingerprints.set(fingerprint, { primary: item, backup: null });
+      }
       scanQueue.push(item);
       while (scanQueue.length > MAX_QUEUED_SCANS) {
-        scanQueue.shift();
+        var dropped = scanQueue.shift();
+        releaseDroppedFingerprint(dropped);
         droppedQueuedScans++;
       }
+    }
+
+    function releaseDroppedFingerprint(item) {
+      var fingerprint = item && item.scan && item.scan.fingerprint;
+      if (!fingerprint) return;
+      var entry = pendingFingerprints.get(fingerprint);
+      if (entry && entry.primary === item) pendingFingerprints.delete(fingerprint);
+    }
+
+    function resolveFingerprintScan(scan, fullyDecoded) {
+      var fingerprint = scan && scan.fingerprint;
+      if (!fingerprint) return;
+      var entry = pendingFingerprints.get(fingerprint);
+      if (!entry || !entry.primary || entry.primary.scan !== scan) return;
+
+      if (fullyDecoded) {
+        rememberBounded(verifiedFingerprints, fingerprint, VERIFIED_FINGERPRINT_LIMIT);
+        pendingFingerprints.delete(fingerprint);
+        return;
+      }
+
+      if (entry.backup) {
+        entry.primary = entry.backup;
+        entry.backup = null;
+        scanQueue.unshift(entry.primary);
+      } else {
+        pendingFingerprints.delete(fingerprint);
+      }
+    }
+
+    function rememberBounded(map, key, limit) {
+      if (map.has(key)) map.delete(key);
+      map.set(key, true);
+      while (map.size > limit) {
+        map.delete(map.keys().next().value);
+      }
+    }
+
+    function fingerprintImage(image) {
+      var data = image.data;
+      var width = image.width;
+      var height = image.height;
+      var sampleCols = Math.min(128, width);
+      var sampleRows = Math.min(64, height);
+      var h1 = (0x811c9dc5 ^ width) >>> 0;
+      var h2 = (0x9e3779b9 ^ height) >>> 0;
+      var sampleIndex = 0;
+
+      for (var sy = 0; sy < sampleRows; sy++) {
+        var y = Math.min(height - 1, Math.floor((sy + 0.5) * height / sampleRows));
+        for (var sx = 0; sx < sampleCols; sx++, sampleIndex++) {
+          var x = Math.min(width - 1, Math.floor((sx + 0.5) * width / sampleCols));
+          var offset = (y * width + x) * 4;
+          var value = data[offset] | (data[offset + 1] << 8) | (data[offset + 2] << 16);
+          h1 = Math.imul(h1 ^ value, 0x01000193) >>> 0;
+          h2 = Math.imul(h2 ^ ((value + sampleIndex) >>> 0), 0x85ebca6b) >>> 0;
+        }
+      }
+
+      return width + 'x' + height + ':' + h1.toString(16).padStart(8, '0') + h2.toString(16).padStart(8, '0');
     }
 
     function dispatchQueuedScans() {
@@ -598,11 +724,11 @@
       }
 
       var visualKey = frame.transferId + ':' + (frame.gridSlot == null ? 0 : frame.gridSlot) + ':' + frame.symbolIndex;
-      if (seenVisualFrames[visualKey]) {
+      if (recentVisualFrames.has(visualKey)) {
         repeatedVisualFrames++;
         return false;
       }
-      seenVisualFrames[visualKey] = true;
+      rememberBounded(recentVisualFrames, visualKey, RECENT_VISUAL_LIMIT);
       lastAcceptedFrame = frame;
       acceptedCount++;
       PAYLOAD_BYTES = frame.payloadBytes || PAYLOAD_BYTES;
@@ -795,6 +921,34 @@
       if (reason) missStats[reason] = (missStats[reason] || 0) + 1;
     }
 
+    function recordGridSlotResult(slots) {
+      var topOk = slots.indexOf(0) !== -1;
+      var bottomOk = slots.indexOf(1) !== -1;
+      if (topOk) gridSlotStats[0].success++;
+      else gridSlotStats[0].failure++;
+      if (bottomOk) gridSlotStats[1].success++;
+      else gridSlotStats[1].failure++;
+      if (topOk && !bottomOk) topOnlyScans++;
+      else if (!topOk && bottomOk) bottomOnlyScans++;
+    }
+
+    function formatGridSlotStats(slot) {
+      var stats = gridSlotStats[slot];
+      var total = stats.success + stats.failure;
+      var rate = total ? Math.round(stats.success / total * 100) : 0;
+      return stats.success + ' ok / ' + stats.failure + ' fail (' + rate + '%)';
+    }
+
+    function weakerGridSlot() {
+      var topTotal = gridSlotStats[0].success + gridSlotStats[0].failure;
+      var bottomTotal = gridSlotStats[1].success + gridSlotStats[1].failure;
+      if (!topTotal || !bottomTotal) return '-';
+      var topRate = gridSlotStats[0].success / topTotal;
+      var bottomRate = gridSlotStats[1].success / bottomTotal;
+      if (Math.abs(topRate - bottomRate) < 0.005) return 'balanced';
+      return topRate < bottomRate ? 'top' : 'bottom';
+    }
+
     function handleScanMiss(reason) {
       recordScanMiss(reason);
       if (!roi) return;
@@ -919,11 +1073,14 @@
         ]],
         ['Capture Queue', [
           ['Capture fps', lastCaptureFps],
-          ['Capture cap', CAPTURE_FPS_LIMIT + ' fps'],
           ['Dispatch fps', lastFps],
           ['Completed fps', lastCompletedFps],
           ['Queue backlog', scanQueue.length + ' / ' + MAX_QUEUED_SCANS],
           ['Queue drops', droppedQueuedScans],
+          ['Fingerprint coalesced', coalescedCaptureFrames],
+          ['Fingerprint verified', verifiedFingerprints.size + ' / ' + VERIFIED_FINGERPRINT_LIMIT],
+          ['Fingerprint pending', pendingFingerprints.size],
+          ['Visual LRU', recentVisualFrames.size + ' / ' + RECENT_VISUAL_LIMIT],
           ['Captured frames', capturedFrames],
           ['Dispatched frames', scanCount],
           ['Completed scans', completedScans]
@@ -935,6 +1092,13 @@
           ['Worker ms', valueOrDash(lastDebug.workerMs)],
           ['Fast path', lastDebug.fastPath || '-'],
           ['Homography cache', lastDebug.cache || '-']
+        ]],
+        ['Grid Slots', [
+          ['Top grid', formatGridSlotStats(0)],
+          ['Bottom grid', formatGridSlotStats(1)],
+          ['Partial: top only', topOnlyScans],
+          ['Partial: bottom only', bottomOnlyScans],
+          ['Weaker slot', weakerGridSlot()]
         ]],
         ['Vision', [
           ['Scan window', scan],

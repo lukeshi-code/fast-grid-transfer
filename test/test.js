@@ -48,3 +48,41 @@ test('old QR assets are removed from active directories', function() {
     assert.equal(fs.existsSync(path.join(root, file)), false, file);
   });
 });
+
+test('protocol geometry and synchronized frame rates stay aligned', function() {
+  var protocol = read('shared/protocol.js');
+  var encoder = read('encoder/index.html');
+  var decoder = read('decoder/index.html');
+
+  assert.match(protocol, /totalCols:\s*360/);
+  assert.match(protocol, /totalRows:\s*112/);
+  assert.match(protocol, /dataCols:\s*324/);
+  assert.match(protocol, /dataRows:\s*76/);
+  assert.match(protocol, /protocolVersion:\s*12/);
+  assert.match(encoder, /id="fps"[^>]*max="30"[^>]*value="30"/);
+  assert.match(encoder, /requestAnimationFrame\(playbackLoop\)/);
+  assert.match(encoder, /createImageData\(TOTAL_COLS,\s*TOTAL_ROWS\)/);
+  assert.match(encoder, /logicalCtx\.putImageData\(logicalImage,\s*0,\s*0\)/);
+  assert.match(encoder, /pixels\.set\(logicalBasePixels\)/);
+  assert.match(encoder, /ctx\.drawImage\(logicalCanvas,/);
+  assert.match(encoder, /nextCanvas\.width\s*=\s*TOTAL_COLS/);
+  assert.doesNotMatch(encoder, /nextCanvas\.width\s*=\s*optimalW/);
+  assert.match(encoder, /RAF ['"]?\s*\+/);
+  assert.match(encoder, /recordRenderDuration\(/);
+  assert.match(encoder, /Worker waits/);
+  assert.match(encoder, /countReadyGrids\(\)/);
+  assert.match(encoder, /encodedGridCount\+\+/);
+  assert.match(encoder, /playbackFrameCount\+\+/);
+  assert.match(encoder, /Encode ['"]?\s*\+/);
+  assert.doesNotMatch(decoder, /\['Capture cap'/);
+  assert.match(decoder, /CAPTURE_FPS_LIMIT\s*=\s*60/);
+  assert.match(decoder, /requestVideoFrameCallback\(scanFrame\)/);
+  assert.match(decoder, /RECENT_VISUAL_LIMIT\s*=\s*512/);
+  assert.match(decoder, /VERIFIED_FINGERPRINT_LIMIT\s*=\s*128/);
+  assert.match(decoder, /fingerprintImage\(image\)/);
+  assert.match(decoder, /resolveFingerprintScan\(scan,\s*roiSlots\.length\s*>=\s*EXPECTED_GRIDS\)/);
+  assert.match(decoder, /recordGridSlotResult\(roiSlots\)/);
+  assert.match(decoder, /\['Top grid',\s*formatGridSlotStats\(0\)\]/);
+  assert.match(decoder, /\['Bottom grid',\s*formatGridSlotStats\(1\)\]/);
+  assert.match(decoder, /\['Weaker slot',\s*weakerGridSlot\(\)\]/);
+});
