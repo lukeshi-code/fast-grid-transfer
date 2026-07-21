@@ -61,6 +61,10 @@ test('protocol geometry and synchronized frame rates stay aligned', function() {
   assert.match(protocol, /protocolVersion:\s*12/);
   assert.match(encoder, /id="fps"[^>]*max="30"[^>]*value="30"/);
   assert.match(encoder, /requestAnimationFrame\(playbackLoop\)/);
+  assert.match(encoder, /playbackAccumulator\s*=\s*Math\.min\(playbackAccumulator\s*\+\s*elapsed,\s*interval\s*\*\s*2\)/);
+  assert.match(encoder, /playbackAccumulator\s*>=\s*interval\s*&&\s*tickPlayback\(\)/);
+  assert.match(encoder, /playbackAccumulator\s*-=\s*interval/);
+  assert.doesNotMatch(encoder, /timestamp\s*-\s*lastPlaybackAt\s*>\s*interval/);
   assert.match(encoder, /createImageData\(TOTAL_COLS,\s*TOTAL_ROWS\)/);
   assert.match(encoder, /logicalCtx\.putImageData\(logicalImage,\s*0,\s*0\)/);
   assert.match(encoder, /pixels\.set\(logicalBasePixels\)/);
