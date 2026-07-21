@@ -123,7 +123,7 @@
       height: auto;
       max-width: 100%;
       max-height: 100%;
-      aspect-ratio: 236 / 86;
+      aspect-ratio: 360 / 112;
       image-rendering: pixelated;
       background: #05060a;
       border-radius: 4px;
@@ -151,8 +151,8 @@
     <input id="file" type="file" hidden>
     <input id="folder" type="file" webkitdirectory multiple hidden>
 
-    <label for="fps">FPS: <span id="fps-val">10</span></label>
-    <input id="fps" type="range" min="1" max="30" value="10">
+    <label for="fps">FPS: <span id="fps-val">30</span></label>
+    <input id="fps" type="range" min="1" max="30" value="30">
 
     <label for="color-mode">Color mode</label>
     <select id="color-mode">
@@ -168,6 +168,8 @@
 
     <div class="metric"><strong id="file-meta">No file loaded</strong><span id="encode-meta">Choose a file to prepare stream metadata.</span></div>
     <div class="metric"><strong id="frame-meta">Frame 0 / 0</strong><span id="rate-meta">0 KB/s raw visual payload</span></div>
+    <div class="metric"><strong id="runtime-meta">Encode 0.0 grids/s · Play 0.0 fps</strong><span id="runtime-detail">Live worker output and successful 2-grid playback advances.</span></div>
+    <div class="metric"><strong id="playback-debug">RAF 0.0 fps | Render 0.00 / 0.00 ms</strong><span id="playback-debug-detail">Ready 0 grids | Worker waits 0 | Page visible</span></div>
     <div class="metric"><strong id="canvas-meta">Canvas: auto</strong><span>Grid size is matched to the visible display area.</span></div>
     <div class="progress"><div class="fill" id="progress"></div></div>
     <p class="hint">No full-file packaging is done in the UI thread. Large files are sliced by the worker while playback runs.</p>
@@ -181,12 +183,12 @@
   </main>
 
   <script>
-    var TOTAL_COLS = 236;
-    var TOTAL_ROWS = 86;
+    var TOTAL_COLS = 360;
+    var TOTAL_ROWS = 112;
     var DATA_OFFSET_X = 18;
     var DATA_OFFSET_Y = 18;
-    var DATA_COLS = 200;
-    var DATA_ROWS = 50;
+    var DATA_COLS = 324;
+    var DATA_ROWS = 76;
     var MARKER_CELLS = 18;
     var GRID_COUNT = 2;
     var APRILTAG_BASES = [0, 4];
@@ -200,6 +202,8 @@
       '#08090d', '#f8fbff', '#00d7ff', '#ffbe2e',
       '#ff9f0a', '#c7f464', '#9ca3af', '#334155'
     ];
+    var COLOR_PIXELS = COLORS.map(colorToPixel);
+    var BACKGROUND_PIXEL = colorToPixel('#05060a');
 
     var fileInput = document.getElementById('file');
     var folderInput = document.getElementById('folder');
@@ -215,6 +219,10 @@
     var encodeMeta = document.getElementById('encode-meta');
     var frameMeta = document.getElementById('frame-meta');
     var rateMeta = document.getElementById('rate-meta');
+    var runtimeMeta = document.getElementById('runtime-meta');
+    var runtimeDetail = document.getElementById('runtime-detail');
+    var playbackDebug = document.getElementById('playback-debug');
+    var playbackDebugDetail = document.getElementById('playback-debug-detail');
     var canvasMeta = document.getElementById('canvas-meta');
     var progress = document.getElementById('progress');
     var stage = document.getElementById('stage');
@@ -223,11 +231,30 @@
       document.getElementById('grid2')
     ];
     var contexts = canvases.map(function(nextCanvas) { return nextCanvas.getContext('2d'); });
+    var logicalCanvases = canvases.map(function() {
+      var nextCanvas = document.createElement('canvas');
+      nextCanvas.width = TOTAL_COLS;
+      nextCanvas.height = TOTAL_ROWS;
+      return nextCanvas;
+    });
+    var logicalContexts = logicalCanvases.map(function(nextCanvas) {
+      var nextCtx = nextCanvas.getContext('2d');
+      nextCtx.imageSmoothingEnabled = false;
+      return nextCtx;
+    });
+    var logicalImages = logicalContexts.map(function(nextCtx) {
+      return nextCtx.createImageData(TOTAL_COLS, TOTAL_ROWS);
+    });
+    var logicalPixels = logicalImages.map(function(image) {
+      return new Uint32Array(image.data.buffer);
+    });
+    var logicalBasePixels = buildLogicalBasePixels();
     var worker = new Worker('fast-grid-encoder-worker.js');
 
     var meta = null;
     var frameIndex = 0;
     var timer = null;
+    var lastPlaybackAt = 0;
     var fps = Number(fpsInput.value);
     var frameCache = {};
     var framePlans = {};
@@ -241,6 +268,24 @@
     var markersReady = false;
     var pendingAutoplay = false;
     var currentSource = null;
+    var encodedGridCount = 0;
+    var playbackFrameCount = 0;
+    var lastEncodedGridCount = 0;
+    var lastPlaybackFrameCount = 0;
+    var runtimeRateAt = performance.now();
+    var actualEncodeRate = 0;
+    var actualPlaybackRate = 0;
+    var rafCallbackCount = 0;
+    var lastRafCallbackCount = 0;
+    var actualRafRate = 0;
+    var workerWaitCount = 0;
+    var lastWorkerWaitCount = 0;
+    var workerWaitRate = 0;
+    var renderWindowTotal = 0;
+    var renderWindowCount = 0;
+    var renderWindowMax = 0;
+    var renderAverageMs = 0;
+    var renderMaxMs = 0;
 
     worker.onmessage = function(event) {
       var msg = event.data;
@@ -251,6 +296,7 @@
         framePlans = {};
         pendingFrames = {};
         lastDrawnFrames = [];
+        resetRuntimeRates();
         fileMeta.textContent = meta.name;
         encodeMeta.textContent = formatSize(meta.fileSize) + ' source, ' + formatSize(meta.streamLength) + ' transfer stream, ' + meta.totalFrames + ' source symbols, ' + meta.payloadBytes + ' bytes/frame/grid, 2-grid RaptorQ ' + DATA_COLS + 'x' + DATA_ROWS + ' rectangular ' + (meta.colorBits === 3 ? '8-color' : '4-color') + (meta.compression === 'gzip' ? ', gzip ' + formatSize(meta.compressedSize) : '') + (meta.kind === 'folder' ? ', folder tar' : '');
         playBtn.disabled = !markersReady;
@@ -265,10 +311,11 @@
         }
       }
       if (msg.type === 'frame') {
+        encodedGridCount++;
         frameCache[msg.symbolIndex] = new Uint8Array(msg.frame);
         framePlans[msg.symbolIndex] = msg.plan || null;
         delete pendingFrames[msg.symbolIndex];
-        if (msg.symbolIndex >= frameIndex && msg.symbolIndex < frameIndex + GRID_COUNT) drawFrames();
+        if (timer == null && msg.symbolIndex >= frameIndex && msg.symbolIndex < frameIndex + GRID_COUNT) drawFrames();
       }
       if (msg.type === 'error') {
         showWorkerError(msg.message || 'Worker error');
@@ -283,6 +330,7 @@
       fps = Number(fpsInput.value);
       fpsVal.textContent = fps;
       updateRate();
+      renderRuntimeRates();
       if (timer) startPlayback();
     });
     colorMode.addEventListener('change', function() {
@@ -334,6 +382,7 @@
       framePlans = {};
       pendingFrames = {};
       lastDrawnFrames = [];
+      resetRuntimeRates();
       var message = { type: source.type };
       if (source.file) message.file = source.file;
       if (source.files) message.files = source.files;
@@ -364,6 +413,7 @@
       fullscreenBtn.textContent = document.fullscreenElement ? 'Exit Fullscreen' : 'Fullscreen Grid';
       setTimeout(autoSizeCanvas, 60);
     });
+    document.addEventListener('visibilitychange', renderPlaybackDiagnostics);
 
     window.addEventListener('resize', autoSizeCanvas);
     if ('ResizeObserver' in window) {
@@ -383,16 +433,31 @@
       if (!frameCache[frameIndex]) {
         frameMeta.textContent = 'Frame ' + (frameIndex + 1) + ' / ' + meta.totalFrames + ' (warming up)';
       }
-      timer = setInterval(function() {
-        tickPlayback();
-      }, 1000 / fps);
+      lastPlaybackAt = 0;
+      timer = requestAnimationFrame(playbackLoop);
       playBtn.disabled = true;
       pauseBtn.disabled = false;
     }
 
+    function playbackLoop(timestamp) {
+      if (timer == null) return;
+      rafCallbackCount++;
+      var interval = 1000 / Math.max(1, fps);
+      if (!lastPlaybackAt) {
+        lastPlaybackAt = timestamp;
+        tickPlayback();
+      } else if (timestamp - lastPlaybackAt >= interval - 1) {
+        tickPlayback();
+        lastPlaybackAt += interval;
+        if (timestamp - lastPlaybackAt > interval) lastPlaybackAt = timestamp;
+      }
+      timer = requestAnimationFrame(playbackLoop);
+    }
+
     function stopPlayback() {
-      if (timer) clearInterval(timer);
+      if (timer != null) cancelAnimationFrame(timer);
       timer = null;
+      lastPlaybackAt = 0;
       playBtn.disabled = !meta;
       pauseBtn.disabled = !meta;
     }
@@ -410,12 +475,16 @@
         if (!frameCache[frameIndex + check]) ready = false;
       }
       if (!ready) {
+        workerWaitCount++;
         drawFrames('waiting for worker');
         return;
       }
+      var renderStartedAt = performance.now();
       drawFrames();
+      recordRenderDuration(performance.now() - renderStartedAt);
       for (var keep = 0; keep < GRID_COUNT; keep++) lastDrawnFrames[keep] = frameCache[frameIndex + keep];
       frameIndex += GRID_COUNT;
+      playbackFrameCount++;
       prefetchFrom(frameIndex);
     }
 
@@ -455,24 +524,19 @@
       var last = total ? ((frameIndex + GRID_COUNT - 1) % total) + 1 : 0;
       frameMeta.textContent = 'Symbols ' + first + '-' + last + ' / ' + total + (note ? ' (' + note + ')' : '');
       progress.style.width = total ? ((first / total) * 100).toFixed(0) + '%' : '0%';
-      updateRate();
     }
 
     function drawFrameSlot(slot, frame, note) {
       var canvas = canvases[slot];
       var ctx = contexts[slot];
+      var logicalCanvas = logicalCanvases[slot];
+      var logicalCtx = logicalContexts[slot];
+      var logicalImage = logicalImages[slot];
+      var pixels = logicalPixels[slot];
       var width = canvas.width;
       var height = canvas.height;
-      var cell = width / TOTAL_COLS;
       var markerBase = APRILTAG_BASES[slot] || 0;
-      ctx.fillStyle = '#05060a';
-      ctx.fillRect(0, 0, width, height);
-      drawAprilTagMarker(ctx, 0, 0, markerBase + 0, cell);
-      drawAprilTagMarker(ctx, TOTAL_COLS - MARKER_CELLS, 0, markerBase + 1, cell);
-      drawAprilTagMarker(ctx, 0, TOTAL_ROWS - MARKER_CELLS, markerBase + 2, cell);
-      drawAprilTagMarker(ctx, TOTAL_COLS - MARKER_CELLS, TOTAL_ROWS - MARKER_CELLS, markerBase + 3, cell);
-      drawColorCalibration(ctx, cell);
-      drawSyncLines(ctx, cell);
+      pixels.set(logicalBasePixels);
 
       if (frame) {
         for (var y = 0; y < DATA_ROWS; y++) {
@@ -480,11 +544,20 @@
             var cellIndex = y * DATA_COLS + x;
             var bits = meta && meta.colorBits === 3 ? 3 : 2;
             var v = readBits(frame, cellIndex, bits);
-            ctx.fillStyle = COLORS[v];
-            ctx.fillRect((x + DATA_OFFSET_X) * cell, (y + DATA_OFFSET_Y) * cell, Math.ceil(cell), Math.ceil(cell));
+            pixels[(y + DATA_OFFSET_Y) * TOTAL_COLS + x + DATA_OFFSET_X] = COLOR_PIXELS[v];
           }
         }
       }
+
+      logicalCtx.putImageData(logicalImage, 0, 0);
+      drawAprilTagMarker(logicalCtx, 0, 0, markerBase + 0, 1);
+      drawAprilTagMarker(logicalCtx, TOTAL_COLS - MARKER_CELLS, 0, markerBase + 1, 1);
+      drawAprilTagMarker(logicalCtx, 0, TOTAL_ROWS - MARKER_CELLS, markerBase + 2, 1);
+      drawAprilTagMarker(logicalCtx, TOTAL_COLS - MARKER_CELLS, TOTAL_ROWS - MARKER_CELLS, markerBase + 3, 1);
+
+      ctx.imageSmoothingEnabled = false;
+      ctx.clearRect(0, 0, width, height);
+      ctx.drawImage(logicalCanvas, 0, 0, TOTAL_COLS, TOTAL_ROWS, 0, 0, width, height);
     }
 
     function autoSizeCanvas() {
@@ -500,16 +573,21 @@
       var optimalW = TOTAL_COLS * cellPx;
       var optimalH = TOTAL_ROWS * cellPx;
       var targetText = minCellPx > 6 ? ' (8-color target ' + minCellPx + ' px)' : '';
-      canvasMeta.textContent = 'Canvas: ' + optimalW + ' x ' + optimalH + ' px, ' + cellPx.toFixed(1) + ' px/cell' + targetText;
+      canvasMeta.textContent = 'Display: ' + optimalW + ' x ' + optimalH + ' px, backing ' + TOTAL_COLS + ' x ' + TOTAL_ROWS + ', ' + cellPx.toFixed(1) + ' px/cell' + targetText;
       var changed = false;
       canvases.forEach(function(nextCanvas) {
-        if (nextCanvas.width !== optimalW || nextCanvas.height !== optimalH) {
-          nextCanvas.width = optimalW;
-          nextCanvas.height = optimalH;
-          nextCanvas.style.width = optimalW + 'px';
-          nextCanvas.style.height = optimalH + 'px';
+        var styleWidth = optimalW + 'px';
+        var styleHeight = optimalH + 'px';
+        if (nextCanvas.width !== TOTAL_COLS || nextCanvas.height !== TOTAL_ROWS) {
+          nextCanvas.width = TOTAL_COLS;
+          nextCanvas.height = TOTAL_ROWS;
           var nextCtx = contexts[canvases.indexOf(nextCanvas)];
           if (nextCtx) nextCtx.imageSmoothingEnabled = false;
+          changed = true;
+        }
+        if (nextCanvas.style.width !== styleWidth || nextCanvas.style.height !== styleHeight) {
+          nextCanvas.style.width = styleWidth;
+          nextCanvas.style.height = styleHeight;
           changed = true;
         }
       });
@@ -590,27 +668,40 @@
       return pattern;
     }
 
-    function drawSyncLines(ctx, cell) {
+    function buildLogicalBasePixels() {
+      var pixels = new Uint32Array(TOTAL_COLS * TOTAL_ROWS);
+      pixels.fill(BACKGROUND_PIXEL);
+
       for (var i = DATA_OFFSET_X; i < DATA_OFFSET_X + DATA_COLS; i++) {
-        ctx.fillStyle = (i & 1) ? '#f8fbff' : '#08090d';
-        ctx.fillRect(i * cell, (DATA_OFFSET_Y - 1) * cell, Math.ceil(cell), Math.ceil(cell));
-        ctx.fillRect(i * cell, (DATA_OFFSET_Y + DATA_ROWS) * cell, Math.ceil(cell), Math.ceil(cell));
+        var syncPixel = COLOR_PIXELS[(i & 1) ? 1 : 0];
+        pixels[(DATA_OFFSET_Y - 1) * TOTAL_COLS + i] = syncPixel;
+        pixels[(DATA_OFFSET_Y + DATA_ROWS) * TOTAL_COLS + i] = syncPixel;
       }
       for (var j = DATA_OFFSET_Y; j < DATA_OFFSET_Y + DATA_ROWS; j++) {
-        ctx.fillStyle = (j & 1) ? '#f8fbff' : '#08090d';
-        ctx.fillRect((DATA_OFFSET_X - 1) * cell, j * cell, Math.ceil(cell), Math.ceil(cell));
-        ctx.fillRect((DATA_OFFSET_X + DATA_COLS) * cell, j * cell, Math.ceil(cell), Math.ceil(cell));
+        var edgePixel = COLOR_PIXELS[(j & 1) ? 1 : 0];
+        pixels[j * TOTAL_COLS + DATA_OFFSET_X - 1] = edgePixel;
+        pixels[j * TOTAL_COLS + DATA_OFFSET_X + DATA_COLS] = edgePixel;
       }
-    }
 
-    function drawColorCalibration(ctx, cell) {
       var topRow = 3;
       var bottomRow = TOTAL_ROWS - 4;
-      for (var i = 0; i < DATA_COLS; i++) {
-        ctx.fillStyle = COLORS[i % COLORS.length];
-        ctx.fillRect((DATA_OFFSET_X + i) * cell, topRow * cell, Math.ceil(cell), Math.ceil(cell));
-        ctx.fillRect((DATA_OFFSET_X + i) * cell, bottomRow * cell, Math.ceil(cell), Math.ceil(cell));
+      for (var colorIndex = 0; colorIndex < DATA_COLS; colorIndex++) {
+        var colorPixel = COLOR_PIXELS[colorIndex % COLOR_PIXELS.length];
+        var column = DATA_OFFSET_X + colorIndex;
+        pixels[topRow * TOTAL_COLS + column] = colorPixel;
+        pixels[bottomRow * TOTAL_COLS + column] = colorPixel;
       }
+      return pixels;
+    }
+
+    function colorToPixel(hex) {
+      var value = parseInt(hex.slice(1), 16);
+      var bytes = new Uint8Array(4);
+      bytes[0] = (value >>> 16) & 255;
+      bytes[1] = (value >>> 8) & 255;
+      bytes[2] = value & 255;
+      bytes[3] = 255;
+      return new Uint32Array(bytes.buffer)[0];
     }
 
     function updateRate() {
@@ -621,6 +712,77 @@
         text += ', repairs/block ' + meta.repairPacketsPerBlock;
       }
       rateMeta.textContent = text;
+    }
+
+    function resetRuntimeRates() {
+      encodedGridCount = 0;
+      playbackFrameCount = 0;
+      lastEncodedGridCount = 0;
+      lastPlaybackFrameCount = 0;
+      runtimeRateAt = performance.now();
+      actualEncodeRate = 0;
+      actualPlaybackRate = 0;
+      rafCallbackCount = 0;
+      lastRafCallbackCount = 0;
+      actualRafRate = 0;
+      workerWaitCount = 0;
+      lastWorkerWaitCount = 0;
+      workerWaitRate = 0;
+      renderWindowTotal = 0;
+      renderWindowCount = 0;
+      renderWindowMax = 0;
+      renderAverageMs = 0;
+      renderMaxMs = 0;
+      renderRuntimeRates();
+      renderPlaybackDiagnostics();
+    }
+
+    function updateRuntimeRates() {
+      var now = performance.now();
+      var elapsed = (now - runtimeRateAt) / 1000;
+      if (elapsed < 0.8) return;
+      actualEncodeRate = (encodedGridCount - lastEncodedGridCount) / elapsed;
+      actualPlaybackRate = (playbackFrameCount - lastPlaybackFrameCount) / elapsed;
+      actualRafRate = (rafCallbackCount - lastRafCallbackCount) / elapsed;
+      workerWaitRate = (workerWaitCount - lastWorkerWaitCount) / elapsed;
+      renderAverageMs = renderWindowCount ? renderWindowTotal / renderWindowCount : 0;
+      renderMaxMs = renderWindowMax;
+      lastEncodedGridCount = encodedGridCount;
+      lastPlaybackFrameCount = playbackFrameCount;
+      lastRafCallbackCount = rafCallbackCount;
+      lastWorkerWaitCount = workerWaitCount;
+      renderWindowTotal = 0;
+      renderWindowCount = 0;
+      renderWindowMax = 0;
+      runtimeRateAt = now;
+      renderRuntimeRates();
+      renderPlaybackDiagnostics();
+    }
+
+    function renderRuntimeRates() {
+      var payload = meta ? meta.payloadBytes : 0;
+      runtimeMeta.textContent = 'Encode ' + actualEncodeRate.toFixed(1) + ' grids/s · Play ' + actualPlaybackRate.toFixed(1) + ' fps';
+      runtimeDetail.textContent = 'Worker ' + formatSize(actualEncodeRate * payload) + '/s · displayed ' + formatSize(actualPlaybackRate * GRID_COUNT * payload) + '/s · target ' + fps + ' fps';
+    }
+
+    function recordRenderDuration(duration) {
+      renderWindowTotal += duration;
+      renderWindowCount++;
+      renderWindowMax = Math.max(renderWindowMax, duration);
+    }
+
+    function countReadyGrids() {
+      var ready = 0;
+      for (var i = 0; i < warmupTarget; i++) {
+        if (!frameCache[frameIndex + i]) break;
+        ready++;
+      }
+      return ready;
+    }
+
+    function renderPlaybackDiagnostics() {
+      playbackDebug.textContent = 'RAF ' + actualRafRate.toFixed(1) + ' fps | Render ' + renderAverageMs.toFixed(2) + ' / ' + renderMaxMs.toFixed(2) + ' ms';
+      playbackDebugDetail.textContent = 'Ready ' + countReadyGrids() + ' grids | Worker waits ' + workerWaitCount + ' (' + workerWaitRate.toFixed(1) + '/s) | Page ' + document.visibilityState;
     }
 
     function readBits(bytes, index, bits) {
@@ -640,6 +802,7 @@
 
     autoSizeCanvas();
     drawFrames();
+    setInterval(updateRuntimeRates, 250);
     loadDeltaArchiveFromQuery();
   </script>
 </body>

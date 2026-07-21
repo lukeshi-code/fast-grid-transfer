@@ -1,14 +1,14 @@
 (function(root) {
   'use strict';
   var protocol = {
-    totalCols: 236,
-    totalRows: 86,
+    totalCols: 360,
+    totalRows: 112,
     dataOffsetX: 18,
     dataOffsetY: 18,
-    dataCols: 200,
-    dataRows: 50,
+    dataCols: 324,
+    dataRows: 76,
     headerBytes: 56,
-    protocolVersion: 9,
+    protocolVersion: 12,
     expectedGrids: 2,
     tagBases: [0, 4],
     cacheMaxAge: 8
