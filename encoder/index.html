@@ -254,7 +254,8 @@
     var meta = null;
     var frameIndex = 0;
     var timer = null;
-    var lastPlaybackAt = 0;
+    var lastRafAt = 0;
+    var playbackAccumulator = 0;
     var fps = Number(fpsInput.value);
     var frameCache = {};
     var framePlans = {};
@@ -433,7 +434,8 @@
       if (!frameCache[frameIndex]) {
         frameMeta.textContent = 'Frame ' + (frameIndex + 1) + ' / ' + meta.totalFrames + ' (warming up)';
       }
-      lastPlaybackAt = 0;
+      lastRafAt = 0;
+      playbackAccumulator = 0;
       timer = requestAnimationFrame(playbackLoop);
       playBtn.disabled = true;
       pauseBtn.disabled = false;
@@ -443,13 +445,16 @@
       if (timer == null) return;
       rafCallbackCount++;
       var interval = 1000 / Math.max(1, fps);
-      if (!lastPlaybackAt) {
-        lastPlaybackAt = timestamp;
-        tickPlayback();
-      } else if (timestamp - lastPlaybackAt >= interval - 1) {
-        tickPlayback();
-        lastPlaybackAt += interval;
-        if (timestamp - lastPlaybackAt > interval) lastPlaybackAt = timestamp;
+      if (!lastRafAt) {
+        lastRafAt = timestamp;
+        playbackAccumulator = interval;
+      } else {
+        var elapsed = Math.max(0, timestamp - lastRafAt);
+        lastRafAt = timestamp;
+        playbackAccumulator = Math.min(playbackAccumulator + elapsed, interval * 2);
+      }
+      if (playbackAccumulator >= interval && tickPlayback()) {
+        playbackAccumulator -= interval;
       }
       timer = requestAnimationFrame(playbackLoop);
     }
@@ -457,7 +462,8 @@
     function stopPlayback() {
       if (timer != null) cancelAnimationFrame(timer);
       timer = null;
-      lastPlaybackAt = 0;
+      lastRafAt = 0;
+      playbackAccumulator = 0;
       playBtn.disabled = !meta;
       pauseBtn.disabled = !meta;
     }
@@ -477,7 +483,7 @@
       if (!ready) {
         workerWaitCount++;
         drawFrames('waiting for worker');
-        return;
+        return false;
       }
       var renderStartedAt = performance.now();
       drawFrames();
@@ -486,6 +492,7 @@
       frameIndex += GRID_COUNT;
       playbackFrameCount++;
       prefetchFrom(frameIndex);
+      return true;
     }
 
     function prefetchFrom(start) {
