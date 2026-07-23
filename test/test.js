@@ -2,6 +2,7 @@ var test = require('node:test');
 var assert = require('node:assert/strict');
 var fs = require('node:fs');
 var path = require('node:path');
+var vm = require('node:vm');
 
 var root = path.resolve(__dirname, '..');
 
@@ -23,6 +24,7 @@ test('fast grid pages parse', function() {
   assert.equal(parseInlineScripts('delta/index.html'), 1);
   new Function(read('encoder/fast-grid-encoder-worker.js'));
   new Function(read('decoder/fast-grid-worker.js'));
+  new Function(read('decoder/frame-preprocess-worker.js'));
 });
 
 test('main pages use fast grid, not the old QR pipeline', function() {
@@ -47,6 +49,58 @@ test('old QR assets are removed from active directories', function() {
   ].forEach(function(file) {
     assert.equal(fs.existsSync(path.join(root, file)), false, file);
   });
+});
+
+test('capture preprocessor returns transferable image data', function() {
+  var posted = null;
+  var bitmapClosed = false;
+  var drawArgs = null;
+  var fakeContext = {
+    imageSmoothingEnabled: true,
+    drawImage: function() { drawArgs = Array.from(arguments); },
+    getImageData: function() {
+      return { width: 4, height: 2, data: new Uint8ClampedArray(4 * 2 * 4) };
+    }
+  };
+  var context = {
+    self: {
+      postMessage: function(message, transfers) {
+        posted = { message: message, transfers: transfers };
+      }
+    },
+    performance: { now: function() { return 1; } },
+    OffscreenCanvas: function(width, height) {
+      this.width = width;
+      this.height = height;
+      this.getContext = function() { return fakeContext; };
+    }
+  };
+  vm.runInNewContext(read('decoder/frame-preprocess-worker.js'), context);
+  context.self.onmessage({
+    data: {
+      type: 'frame',
+      frame: {
+        displayWidth: 8,
+        displayHeight: 6,
+        close: function() { bitmapClosed = true; }
+      },
+      sourceX: 1,
+      sourceY: 2,
+      sourceW: 6,
+      sourceH: 4,
+      targetW: 4,
+      targetH: 2,
+      scan: { frameSeq: 3, roi: true },
+      session: 7
+    }
+  });
+
+  assert.equal(bitmapClosed, true);
+  assert.equal(posted.message.type, 'frame');
+  assert.equal(posted.message.session, 7);
+  assert.match(posted.message.fingerprint, /^4x2:/);
+  assert.equal(posted.transfers[0], posted.message.image.data.buffer);
+  assert.deepEqual(drawArgs.slice(1), [1, 2, 6, 4, 0, 0, 4, 2]);
 });
 
 test('protocol geometry and synchronized frame rates stay aligned', function() {
@@ -81,6 +135,18 @@ test('protocol geometry and synchronized frame rates stay aligned', function() {
   assert.doesNotMatch(decoder, /\['Capture cap'/);
   assert.match(decoder, /CAPTURE_FPS_LIMIT\s*=\s*60/);
   assert.match(decoder, /requestVideoFrameCallback\(scanFrame\)/);
+  assert.match(decoder, /new MediaStreamTrackProcessor\(\{\s*track:\s*track,\s*maxBufferSize:\s*1\s*\}\)/);
+  assert.match(decoder, /trackProcessor\.readable\.getReader\(\)/);
+  assert.match(decoder, /queueCaptureFrame\(\{\s*frame:\s*frame,/);
+  assert.match(decoder, /capturePath\s*=\s*'TrackProcessor \+ VideoFrame'/);
+  assert.match(decoder, /if\s*\(!stream\s*\|\|\s*decodedBlob\s*\|\|\s*trackPumpActive\s*\|\|\s*scanScheduled\)\s*return/);
+  assert.match(decoder, /createImageBitmap\(video,/);
+  assert.match(decoder, /new Worker\('frame-preprocess-worker\.js'\)/);
+  assert.match(decoder, /applyConstraints\(\{\s*frameRate:\s*\{\s*ideal:\s*60,\s*max:\s*60\s*\}\s*\}\)/);
+  assert.match(decoder, /\['Video delivery fps',\s*lastDeliveredFps\]/);
+  assert.match(decoder, /\['Capture ready fps',\s*lastCaptureFps\]/);
+  assert.match(read('decoder/frame-preprocess-worker.js'), /new OffscreenCanvas\(width,\s*height\)/);
+  assert.match(read('decoder/frame-preprocess-worker.js'), /ctx\.getImageData\(/);
   assert.match(decoder, /RECENT_VISUAL_LIMIT\s*=\s*512/);
   assert.match(decoder, /VERIFIED_FINGERPRINT_LIMIT\s*=\s*128/);
   assert.match(decoder, /fingerprintImage\(image\)/);
