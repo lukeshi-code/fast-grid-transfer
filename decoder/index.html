@@ -169,6 +169,7 @@
     var RELOCATE_EVERY = 8;
     var EXPECTED_GRIDS = 2;
     var MAX_QUEUED_SCANS = 10;
+    var MAX_BITMAP_REQUESTS = 2;
     var CAPTURE_FPS_LIMIT = 60;
     var RECENT_VISUAL_LIMIT = 512;
     var VERIFIED_FINGERPRINT_LIMIT = 128;
@@ -178,6 +179,16 @@
     var workerStates = [];
     var nextWorkerHint = 0;
     var scanQueue = [];
+    var captureWorker = null;
+    var captureWorkerBusy = false;
+    var queuedCaptureFrame = null;
+    var bitmapRequestsInFlight = 0;
+    var captureSession = 0;
+    var asyncCaptureEnabled = false;
+    var trackProcessor = null;
+    var trackReader = null;
+    var trackPumpActive = false;
+    var capturePath = 'main-thread fallback';
 
     var stream = null;
     var canvas = document.createElement('canvas');
@@ -192,10 +203,13 @@
 
     var PAYLOAD_BYTES = 3400;
     var scanCount = 0;
+    var deliveredFrames = 0;
     var capturedFrames = 0;
     var acceptedCount = 0;
     var completedScans = 0;
     var droppedQueuedScans = 0;
+    var droppedCaptureFrames = 0;
+    var captureBitmapErrors = 0;
     var coalescedCaptureFrames = 0;
     var seenPackets = Object.create(null);
     var recentVisualFrames = new Map();
@@ -241,10 +255,12 @@
     var lastDebug = {};
     var lastAcceptedFrame = null;
     var lastRateTime = performance.now();
+    var lastDeliveredCount = 0;
     var lastCaptureCount = 0;
     var lastScanCount = 0;
     var lastCompletedCount = 0;
     var lastAcceptedCount = 0;
+    var lastDeliveredFps = 0;
     var lastCaptureFps = 0;
     var lastFps = 0;
     var lastCompletedFps = 0;
@@ -254,6 +270,15 @@
     var transferStartedAt = 0;
     var averagePacketRate = 0;
     var averageVisualRate = 0;
+    var captureTrackSettings = {};
+    var captureConstraintStatus = '-';
+    var lastPresentedFrames = 0;
+    var presentedFrameGaps = 0;
+    var preprocessMsTotal = 0;
+    var preprocessMsSamples = 0;
+    var preprocessMsMax = 0;
+    var lastPreprocessMs = 0;
+    var lastPreprocessMaxMs = 0;
     var lastLocks = [];
 
     startBtn.addEventListener('click', startCapture);
@@ -351,14 +376,29 @@
           video: { width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 60, max: 60 } },
           audio: false
         });
+        var captureTrack = stream.getVideoTracks()[0];
+        captureConstraintStatus = 'requested 60 fps';
+        if (captureTrack && typeof captureTrack.applyConstraints === 'function') {
+          try {
+            await captureTrack.applyConstraints({ frameRate: { ideal: 60, max: 60 } });
+            captureConstraintStatus = 'applied 60 fps';
+          } catch (constraintError) {
+            captureConstraintStatus = 'constraint rejected: ' + (constraintError.name || 'error');
+          }
+        }
+        captureTrackSettings = captureTrack && typeof captureTrack.getSettings === 'function'
+          ? captureTrack.getSettings()
+          : {};
         video.srcObject = stream;
         await video.play();
+        initializeCaptureWorker();
+        var directTrackCapture = startTrackFramePump(captureTrack);
         stream.getTracks().forEach(function(track) { track.addEventListener('ended', stopCapture); });
         startBtn.disabled = true;
         stopBtn.disabled = false;
         statusEl.textContent = 'Capturing';
         detailEl.textContent = '';
-        scheduleScan();
+        if (!directTrackCapture) scheduleScan();
       } catch (err) {
         statusEl.textContent = 'Capture failed';
         detailEl.textContent = err.message || String(err);
@@ -377,6 +417,7 @@
     }
 
     function stopCapture() {
+      captureSession++;
       if (raf != null) {
         if (scanCallbackType === 'video' && typeof video.cancelVideoFrameCallback === 'function') {
           video.cancelVideoFrameCallback(raf);
@@ -387,6 +428,19 @@
       raf = null;
       scanCallbackType = '';
       scanScheduled = false;
+      stopTrackFramePump();
+      bitmapRequestsInFlight = 0;
+      captureWorkerBusy = false;
+      if (queuedCaptureFrame) {
+        closeCaptureSource(queuedCaptureFrame);
+        queuedCaptureFrame = null;
+      }
+      if (captureWorker) {
+        captureWorker.terminate();
+        captureWorker = null;
+      }
+      asyncCaptureEnabled = false;
+      capturePath = 'main-thread fallback';
       if (stream) {
         stream.getTracks().forEach(function(track) { track.stop(); });
         stream = null;
@@ -407,19 +461,24 @@
       decodedBlob = null;
       decodedName = 'file.bin';
       scanCount = 0;
+      deliveredFrames = 0;
       capturedFrames = 0;
       completedScans = 0;
       acceptedCount = 0;
       droppedQueuedScans = 0;
+      droppedCaptureFrames = 0;
+      captureBitmapErrors = 0;
       coalescedCaptureFrames = 0;
       verifiedFingerprints = new Map();
       pendingFingerprints = new Map();
       lastRateTime = performance.now();
       lastCaptureAt = 0;
+      lastDeliveredCount = 0;
       lastCaptureCount = 0;
       lastScanCount = 0;
       lastCompletedCount = 0;
       lastAcceptedCount = 0;
+      lastDeliveredFps = 0;
       lastCaptureFps = 0;
       roi = null;
       roiMisses = 0;
@@ -439,6 +498,16 @@
       transferStartedAt = 0;
       averagePacketRate = 0;
       averageVisualRate = 0;
+      captureTrackSettings = {};
+      captureConstraintStatus = '-';
+      capturePath = 'main-thread fallback';
+      lastPresentedFrames = 0;
+      presentedFrameGaps = 0;
+      preprocessMsTotal = 0;
+      preprocessMsSamples = 0;
+      preprocessMsMax = 0;
+      lastPreprocessMs = 0;
+      lastPreprocessMaxMs = 0;
       progress.style.width = '0%';
       progressText.textContent = 'Packet Map';
       rateEl.textContent = 'Green = received, red = failed, yellow = recovered by RaptorQ';
@@ -487,7 +556,7 @@
     }
 
     function scheduleScan() {
-      if (!stream || decodedBlob || scanScheduled) return;
+      if (!stream || decodedBlob || trackPumpActive || scanScheduled) return;
       scanScheduled = true;
       if (typeof video.requestVideoFrameCallback === 'function') {
         scanCallbackType = 'video';
@@ -498,7 +567,7 @@
       }
     }
 
-    function scanFrame(now) {
+    function scanFrame(now, metadata) {
       var callbackType = scanCallbackType;
       raf = null;
       scanCallbackType = '';
@@ -511,6 +580,13 @@
         return;
       }
       lastCaptureAt = now;
+      deliveredFrames++;
+      if (metadata && Number.isFinite(metadata.presentedFrames)) {
+        if (lastPresentedFrames && metadata.presentedFrames > lastPresentedFrames + 1) {
+          presentedFrameGaps += metadata.presentedFrames - lastPresentedFrames - 1;
+        }
+        lastPresentedFrames = metadata.presentedFrames;
+      }
 
       var vw = video.videoWidth;
       var vh = video.videoHeight;
@@ -524,14 +600,7 @@
       var scale = Math.min(1, maxW / source.sw);
       var targetW = Math.max(1, Math.round(source.sw * scale));
       var targetH = Math.max(1, Math.round(source.sh * scale));
-      if (canvas.width !== targetW) canvas.width = targetW;
-      if (canvas.height !== targetH) canvas.height = targetH;
-      ctx.imageSmoothingEnabled = false;
-      ctx.drawImage(video, source.sx, source.sy, source.sw, source.sh, 0, 0, targetW, targetH);
-      var image = ctx.getImageData(0, 0, targetW, targetH);
-
-      capturedFrames++;
-      var frameSeq = capturedFrames;
+      var frameSeq = deliveredFrames;
       var scan = {
         sx: source.sx,
         sy: source.sy,
@@ -541,14 +610,301 @@
         roi: source.roi,
         level: source.level || 0,
         frameSeq: frameSeq,
-        fingerprint: source.roi ? fingerprintImage(image) : ''
+        fingerprint: ''
       };
       lastScanSource = source;
-      enqueueScan({ image: image, scan: scan });
-      dispatchQueuedScans();
+
+      if (asyncCaptureEnabled) {
+        scheduleScan();
+        captureFrameAsync(source, targetW, targetH, scan);
+        updateRate();
+        return;
+      }
+
+      if (canvas.width !== targetW) canvas.width = targetW;
+      if (canvas.height !== targetH) canvas.height = targetH;
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(video, source.sx, source.sy, source.sw, source.sh, 0, 0, targetW, targetH);
+      var image = ctx.getImageData(0, 0, targetW, targetH);
+      scan.fingerprint = source.roi ? fingerprintImage(image) : '';
+      finishCapturedImage(image, scan, 0);
       drawOverlay();
       updateRate();
       scheduleScan();
+    }
+
+    function initializeCaptureWorker() {
+      asyncCaptureEnabled = typeof OffscreenCanvas === 'function' &&
+        (typeof MediaStreamTrackProcessor === 'function' || typeof createImageBitmap === 'function');
+      if (!asyncCaptureEnabled) return;
+
+      captureWorker = new Worker('frame-preprocess-worker.js');
+      capturePath = typeof createImageBitmap === 'function'
+        ? 'ImageBitmap + OffscreenCanvas'
+        : 'main-thread fallback';
+      captureWorker.onmessage = function(event) {
+        var msg = event.data || {};
+        var dispatchNext = true;
+        captureWorkerBusy = false;
+        if (msg.session === captureSession && stream && !decodedBlob) {
+          if (msg.type === 'frame' && msg.image && msg.scan) {
+            msg.scan.fingerprint = msg.fingerprint || '';
+            finishCapturedImage(msg.image, msg.scan, msg.preprocessMs || 0);
+          } else if (msg.type === 'error') {
+            if (trackPumpActive) {
+              if (queuedCaptureFrame) {
+                closeCaptureSource(queuedCaptureFrame);
+                queuedCaptureFrame = null;
+              }
+              fallbackFromTrackProcessor({ message: msg.message || 'VideoFrame preprocessing failed' });
+              dispatchNext = false;
+            } else {
+              captureBitmapErrors++;
+              lastDebug = { stage: 'capture-worker-error', error: msg.message || 'Capture worker error' };
+            }
+          }
+        }
+        if (dispatchNext) dispatchQueuedCaptureFrame();
+      };
+      captureWorker.onerror = function(err) {
+        captureBitmapErrors++;
+        captureWorkerBusy = false;
+        asyncCaptureEnabled = false;
+        stopTrackFramePump();
+        capturePath = 'main-thread fallback';
+        lastDebug = { stage: 'capture-worker-error', error: err.message || 'Capture worker error' };
+        if (queuedCaptureFrame) {
+          closeCaptureSource(queuedCaptureFrame);
+          queuedCaptureFrame = null;
+        }
+        if (captureWorker) {
+          captureWorker.terminate();
+          captureWorker = null;
+        }
+        scheduleScan();
+      };
+    }
+
+    function startTrackFramePump(track) {
+      if (!captureWorker || !track || typeof MediaStreamTrackProcessor !== 'function') return false;
+      try {
+        trackProcessor = new MediaStreamTrackProcessor({ track: track, maxBufferSize: 1 });
+        trackReader = trackProcessor.readable.getReader();
+        trackPumpActive = true;
+        capturePath = 'TrackProcessor + VideoFrame';
+        pumpTrackFrames(captureSession, trackReader);
+        return true;
+      } catch (err) {
+        trackProcessor = null;
+        trackReader = null;
+        trackPumpActive = false;
+        captureBitmapErrors++;
+        if (typeof createImageBitmap !== 'function') {
+          asyncCaptureEnabled = false;
+          capturePath = 'main-thread fallback';
+        }
+        return false;
+      }
+    }
+
+    async function pumpTrackFrames(session, reader) {
+      while (trackPumpActive && session === captureSession && stream && !decodedBlob) {
+        var result;
+        try {
+          result = await reader.read();
+        } catch (err) {
+          if (trackPumpActive && session === captureSession) fallbackFromTrackProcessor(err);
+          return;
+        }
+        if (!result || result.done) {
+          if (trackPumpActive && session === captureSession) fallbackFromTrackProcessor();
+          return;
+        }
+        if (!trackPumpActive || session !== captureSession || !stream || decodedBlob) {
+          try { result.value.close(); } catch (_) {}
+          return;
+        }
+        handleTrackVideoFrame(result.value, session);
+      }
+    }
+
+    function handleTrackVideoFrame(frame, session) {
+      var vw = frame.displayWidth || frame.codedWidth || video.videoWidth;
+      var vh = frame.displayHeight || frame.codedHeight || video.videoHeight;
+      if (!vw || !vh) {
+        frame.close();
+        droppedCaptureFrames++;
+        return;
+      }
+
+      deliveredFrames++;
+      var source = getScanSource(vw, vh);
+      var maxW = source.roi ? ROI_SCAN_MAX_WIDTH : FULL_SCAN_MAX_WIDTH;
+      var scale = Math.min(1, maxW / source.sw);
+      var targetW = Math.max(1, Math.round(source.sw * scale));
+      var targetH = Math.max(1, Math.round(source.sh * scale));
+      var scan = {
+        sx: source.sx,
+        sy: source.sy,
+        sw: source.sw,
+        sh: source.sh,
+        scale: scale,
+        roi: source.roi,
+        level: source.level || 0,
+        frameSeq: deliveredFrames,
+        fingerprint: ''
+      };
+      lastScanSource = source;
+      queueCaptureFrame({
+        frame: frame,
+        sourceX: source.sx,
+        sourceY: source.sy,
+        sourceW: source.sw,
+        sourceH: source.sh,
+        targetW: targetW,
+        targetH: targetH,
+        scan: scan,
+        session: session
+      });
+      updateRate();
+    }
+
+    function fallbackFromTrackProcessor(err) {
+      stopTrackFramePump();
+      if (err) {
+        captureBitmapErrors++;
+        lastDebug = { stage: 'track-processor-error', error: err.message || String(err) };
+      }
+      if (captureWorker && typeof createImageBitmap === 'function') {
+        asyncCaptureEnabled = true;
+        capturePath = 'ImageBitmap + OffscreenCanvas';
+      } else {
+        asyncCaptureEnabled = false;
+        capturePath = 'main-thread fallback';
+      }
+      scheduleScan();
+    }
+
+    function stopTrackFramePump() {
+      trackPumpActive = false;
+      var reader = trackReader;
+      trackReader = null;
+      trackProcessor = null;
+      if (reader && typeof reader.cancel === 'function') {
+        try {
+          var cancelled = reader.cancel();
+          if (cancelled && typeof cancelled.catch === 'function') cancelled.catch(function() {});
+        } catch (_) {}
+      }
+    }
+
+    function captureFrameAsync(source, targetW, targetH, scan) {
+      if (bitmapRequestsInFlight >= MAX_BITMAP_REQUESTS) {
+        droppedCaptureFrames++;
+        return;
+      }
+
+      var session = captureSession;
+      bitmapRequestsInFlight++;
+      createImageBitmap(video, source.sx, source.sy, source.sw, source.sh).then(function(bitmap) {
+        bitmapRequestsInFlight = Math.max(0, bitmapRequestsInFlight - 1);
+        if (!captureWorker || !stream || decodedBlob || session !== captureSession) {
+          bitmap.close();
+          return;
+        }
+        queueCaptureFrame({
+          frame: bitmap,
+          sourceX: 0,
+          sourceY: 0,
+          sourceW: bitmap.width,
+          sourceH: bitmap.height,
+          targetW: targetW,
+          targetH: targetH,
+          scan: scan,
+          session: session
+        });
+      }).catch(function() {
+        bitmapRequestsInFlight = Math.max(0, bitmapRequestsInFlight - 1);
+        captureBitmapErrors++;
+      });
+    }
+
+    function queueCaptureFrame(item) {
+      if (!captureWorkerBusy) {
+        dispatchCaptureFrame(item);
+        return;
+      }
+      if (queuedCaptureFrame) {
+        if (queuedCaptureFrame.scan.frameSeq > item.scan.frameSeq) {
+          closeCaptureSource(item);
+          droppedCaptureFrames++;
+          return;
+        }
+        closeCaptureSource(queuedCaptureFrame);
+        droppedCaptureFrames++;
+      }
+      queuedCaptureFrame = item;
+    }
+
+    function dispatchCaptureFrame(item) {
+      if (!captureWorker) {
+        closeCaptureSource(item);
+        return;
+      }
+      captureWorkerBusy = true;
+      try {
+        captureWorker.postMessage({
+          type: 'frame',
+          frame: item.frame,
+          sourceX: item.sourceX,
+          sourceY: item.sourceY,
+          sourceW: item.sourceW,
+          sourceH: item.sourceH,
+          targetW: item.targetW,
+          targetH: item.targetH,
+          scan: item.scan,
+          session: item.session
+        }, [item.frame]);
+      } catch (err) {
+        captureWorkerBusy = false;
+        closeCaptureSource(item);
+        if (trackPumpActive) {
+          fallbackFromTrackProcessor(err);
+        } else {
+          captureBitmapErrors++;
+          asyncCaptureEnabled = false;
+          capturePath = 'main-thread fallback';
+          lastDebug = { stage: 'capture-transfer-error', error: err.message || String(err) };
+          if (captureWorker) {
+            captureWorker.terminate();
+            captureWorker = null;
+          }
+          scheduleScan();
+        }
+      }
+    }
+
+    function dispatchQueuedCaptureFrame() {
+      if (!captureWorker || captureWorkerBusy || !queuedCaptureFrame) return;
+      var item = queuedCaptureFrame;
+      queuedCaptureFrame = null;
+      dispatchCaptureFrame(item);
+    }
+
+    function closeCaptureSource(item) {
+      if (!item || !item.frame) return;
+      try { item.frame.close(); } catch (_) {}
+    }
+
+    function finishCapturedImage(image, scan, preprocessMs) {
+      capturedFrames++;
+      if (preprocessMs > 0) {
+        preprocessMsTotal += preprocessMs;
+        preprocessMsSamples++;
+        preprocessMsMax = Math.max(preprocessMsMax, preprocessMs);
+      }
+      enqueueScan({ image: image, scan: scan });
+      dispatchQueuedScans();
     }
 
     function enqueueScan(item) {
@@ -890,6 +1246,7 @@
       var now = performance.now();
       if (now - lastRateTime < 1000) return;
       var elapsed = (now - lastRateTime) / 1000;
+      var deliveredFps = Math.round((deliveredFrames - lastDeliveredCount) / elapsed);
       var captureFps = Math.round((capturedFrames - lastCaptureCount) / elapsed);
       var fps = Math.round((scanCount - lastScanCount) / elapsed);
       var completedFps = Math.round((completedScans - lastCompletedCount) / elapsed);
@@ -903,17 +1260,26 @@
         averagePacketRate = receivedPackets / transferElapsed;
         averageVisualRate = averagePacketRate * PAYLOAD_BYTES;
       }
+      lastDeliveredFps = deliveredFps;
       lastCaptureFps = captureFps;
       lastFps = fps;
       lastCompletedFps = completedFps;
       lastSuccess = success;
       var topMisses = Object.keys(missStats).sort(function(a, b) { return missStats[b] - missStats[a]; }).slice(0, 3).map(function(key) { return key + ':' + missStats[key]; }).join(', ');
-      rateEl.textContent = 'Capture ' + captureFps + ' fps, dispatch ' + fps + ' fps, signal ' + success + '%, accepted ' + acceptedCount + (topMisses ? ', misses ' + topMisses : '');
+      lastPreprocessMs = preprocessMsSamples ? preprocessMsTotal / preprocessMsSamples : 0;
+      lastPreprocessMaxMs = preprocessMsMax;
+      preprocessMsTotal = 0;
+      preprocessMsSamples = 0;
+      preprocessMsMax = 0;
+      rateEl.textContent = 'Video ' + deliveredFps + ' fps, capture ' + captureFps + ' fps, dispatch ' + fps + ' fps, signal ' + success + '%, accepted ' + acceptedCount + (topMisses ? ', misses ' + topMisses : '');
       lastRateTime = now;
+      lastDeliveredCount = deliveredFrames;
       lastCaptureCount = capturedFrames;
       lastScanCount = scanCount;
       lastCompletedCount = completedScans;
       lastAcceptedCount = acceptedCount;
+      renderDiagnostics();
+      renderSummary();
     }
 
     function recordScanMiss(reason) {
@@ -1060,6 +1426,10 @@
       var detText = lastDetectedBox ? fmtBox(lastDetectedBox) + ' conf ' + Math.round(lastBoxConfidence * 100) + '%' : '-';
       var frame = lastAcceptedFrame || {};
       var workerText = workerStates.map(function(state, index) { return 'W' + index + ':' + (state.busy ? 'busy' : 'idle'); }).join(' ');
+      var trackText = captureTrackSettings.width
+        ? captureTrackSettings.width + 'x' + captureTrackSettings.height + ' @ ' + valueOrDash(captureTrackSettings.frameRate) + ' fps'
+        : '-';
+      var captureBacklog = bitmapRequestsInFlight + ' bitmap, ' + (captureWorkerBusy ? 1 : 0) + ' worker, ' + (queuedCaptureFrame ? 1 : 0) + ' latest';
       var sections = [
         ['Transfer', [
           ['Success', lastSuccess + '%'],
@@ -1072,7 +1442,16 @@
           ['Miss histogram', topMisses]
         ]],
         ['Capture Queue', [
-          ['Capture fps', lastCaptureFps],
+          ['Video delivery fps', lastDeliveredFps],
+          ['Capture ready fps', lastCaptureFps],
+          ['Capture path', capturePath],
+          ['Track setting', trackText],
+          ['Track constraint', captureConstraintStatus],
+          ['Preprocess ms', lastPreprocessMs ? lastPreprocessMs.toFixed(2) + ' avg / ' + lastPreprocessMaxMs.toFixed(2) + ' max' : '-'],
+          ['Capture backlog', captureBacklog],
+          ['Capture drops', droppedCaptureFrames],
+          ['Capture errors', captureBitmapErrors],
+          ['Presented gaps', trackPumpActive ? '-' : presentedFrameGaps],
           ['Dispatch fps', lastFps],
           ['Completed fps', lastCompletedFps],
           ['Queue backlog', scanQueue.length + ' / ' + MAX_QUEUED_SCANS],
