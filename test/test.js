@@ -105,14 +105,40 @@ test('capture preprocessor returns transferable image data', function() {
 
 test('protocol geometry and synchronized frame rates stay aligned', function() {
   var protocol = read('shared/protocol.js');
+  var protocolContext = {};
+  vm.runInNewContext(protocol, protocolContext);
+  var protocolValues = protocolContext.FastGridProtocol;
   var encoder = read('encoder/index.html');
   var decoder = read('decoder/index.html');
+  var encoderWorker = read('encoder/fast-grid-encoder-worker.js');
+  var decodeWorker = read('decoder/fast-grid-worker.js');
 
-  assert.match(protocol, /totalCols:\s*360/);
-  assert.match(protocol, /totalRows:\s*112/);
-  assert.match(protocol, /dataCols:\s*324/);
-  assert.match(protocol, /dataRows:\s*76/);
-  assert.match(protocol, /protocolVersion:\s*12/);
+  assert.equal(protocolValues.totalCols, 360);
+  assert.equal(protocolValues.totalRows, 112);
+  assert.equal(protocolValues.dataCols, 324);
+  assert.equal(protocolValues.dataRows, 108);
+  assert.equal(protocolValues.protocolVersion, 14);
+  assert.equal(protocolValues.frameBytes2 - protocolValues.headerBytes, 8692);
+  assert.equal(protocolValues.frameBytes3 - protocolValues.headerBytes, 13066);
+  assert.deepEqual(Array.from(protocolValues.calibrationRows), [3, 108]);
+  assert.deepEqual(Array.from(protocolValues.syncRows), [17, 94]);
+  assert.equal(new Set(protocolValues.dataPhysicalRows).size, 108);
+  [3, 17, 94, 108].forEach(function(row) {
+    assert.equal(protocolValues.dataPhysicalRows.includes(row), false);
+  });
+  assert.match(encoder, /window\.FastGridProtocol\s*\|\|\s*createProtocolFallback\(\)/);
+  assert.match(encoder, /folderInput\.value\s*=\s*''/);
+  assert.match(encoder, /restartEncoderWorker\(\)/);
+  assert.match(encoder, /msg\.type\s*===\s*'prepare-progress'/);
+  assert.match(encoderWorker, /RAPTOR_CHUNK_BYTES\s*=\s*16\s*\*\s*1024\s*\*\s*1024/);
+  assert.match(encoderWorker, /new Blob\(parts\)\.arrayBuffer\(\)/);
+  assert.match(encoderWorker, /function buildRaptorBlocks\(/);
+  assert.match(encoderWorker, /frame\[6\]\s*=\s*block\.index/);
+  assert.match(decoder, /raptorDecoders\s*=\s*Object\.create\(null\)/);
+  assert.match(decoder, /decodedChunks\[frame\.blockIndex\]/);
+  assert.match(decodeWorker, /var blockIndex = frame\[6\]/);
+  assert.match(encoder, /var physicalY = DATA_PHYSICAL_ROWS\[y\]/);
+  assert.match(decodeWorker, /var physicalY = DATA_PHYSICAL_ROWS\[gy\]/);
   assert.match(encoder, /id="fps"[^>]*max="30"[^>]*value="30"/);
   assert.match(encoder, /requestAnimationFrame\(playbackLoop\)/);
   assert.match(encoder, /playbackAccumulator\s*=\s*Math\.min\(playbackAccumulator\s*\+\s*elapsed,\s*interval\s*\*\s*2\)/);
@@ -142,7 +168,11 @@ test('protocol geometry and synchronized frame rates stay aligned', function() {
   assert.match(decoder, /if\s*\(!stream\s*\|\|\s*decodedBlob\s*\|\|\s*trackPumpActive\s*\|\|\s*scanScheduled\)\s*return/);
   assert.match(decoder, /createImageBitmap\(video,/);
   assert.match(decoder, /new Worker\('frame-preprocess-worker\.js'\)/);
+  assert.match(decoder, /width:\s*\{\s*ideal:\s*1920,\s*max:\s*1920\s*\}/);
+  assert.match(decoder, /height:\s*\{\s*ideal:\s*1080,\s*max:\s*1080\s*\}/);
   assert.match(decoder, /applyConstraints\(\{\s*frameRate:\s*\{\s*ideal:\s*60,\s*max:\s*60\s*\}\s*\}\)/);
+  assert.match(decoder, /setDirectTrackPreview\(true\)/);
+  assert.match(decoder, /High-resolution preview is disabled/);
   assert.match(decoder, /\['Video delivery fps',\s*lastDeliveredFps\]/);
   assert.match(decoder, /\['Capture ready fps',\s*lastCaptureFps\]/);
   assert.match(read('decoder/frame-preprocess-worker.js'), /new OffscreenCanvas\(width,\s*height\)/);

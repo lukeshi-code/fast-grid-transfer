@@ -29,6 +29,10 @@
     aside { border-right: 1px solid var(--border); background: var(--surface); padding: 22px; overflow: auto; }
     main { min-width: 0; padding: 24px; display: flex; align-items: center; justify-content: center; }
     .preview { position: relative; width: min(92vw, 1000px); max-height: 78vh; display: grid; }
+    .preview.direct-track video, .preview.direct-track #overlay { display: none; }
+    .capture-placeholder { display: none; min-height: 260px; padding: 32px; place-items: center; align-content: center; gap: 10px; text-align: center; color: var(--muted); background: #05060a; border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 18px 60px rgba(0,0,0,0.45); }
+    .capture-placeholder strong { color: var(--cyan); font-size: 18px; }
+    .preview.direct-track .capture-placeholder { display: grid; }
     h1 { font-size: 1.25rem; margin: 0 0 4px; }
     p { color: var(--dim); line-height: 1.45; }
     a { color: var(--accent); }
@@ -134,7 +138,7 @@
     <p class="hint">Best results: choose the encoder tab/window, not the whole desktop. Keep browser zoom at 100%.</p>
   </aside>
 
-  <main><div class="preview"><video id="video" autoplay playsinline muted></video><canvas id="overlay"></canvas></div></main>
+  <main><div class="preview" id="preview"><video id="video" autoplay playsinline muted></video><canvas id="overlay"></canvas><div class="capture-placeholder" id="capture-placeholder"><strong>Direct track capture active</strong><span>High-resolution preview is disabled to maximize capture throughput.</span></div></div></main>
 
   <script>
     var startBtn = document.getElementById('start');
@@ -161,6 +165,8 @@
     var packetCanvas = document.getElementById('chunk-grid');
     var packetCtx = packetCanvas.getContext('2d');
     var diagnostics = document.getElementById('diagnostics');
+    var preview = document.getElementById('preview');
+    var capturePlaceholder = document.getElementById('capture-placeholder');
     var video = document.getElementById('video');
     var overlay = document.getElementById('overlay');
     var overlayCtx = overlay.getContext('2d');
@@ -201,7 +207,7 @@
     var decodedBlob = null;
     var decodedName = 'file.bin';
 
-    var PAYLOAD_BYTES = 3400;
+    var PAYLOAD_BYTES = 8692;
     var scanCount = 0;
     var deliveredFrames = 0;
     var capturedFrames = 0;
@@ -248,7 +254,10 @@
     var lastPacketKind = '-';
 
     var raptorReady = null;
-    var raptorDecoder = null;
+    var raptorDecoders = Object.create(null);
+    var decodedChunks = [];
+    var completedChunkCount = 0;
+    var expectedChunkCount = 0;
     var RaptorDecoder = null;
     var RaptorEncodingPacket = null;
 
@@ -377,28 +386,39 @@
           audio: false
         });
         var captureTrack = stream.getVideoTracks()[0];
-        captureConstraintStatus = 'requested 60 fps';
+        captureConstraintStatus = 'requested 1920x1080 @ 60 fps';
         if (captureTrack && typeof captureTrack.applyConstraints === 'function') {
           try {
-            await captureTrack.applyConstraints({ frameRate: { ideal: 60, max: 60 } });
-            captureConstraintStatus = 'applied 60 fps';
+            await captureTrack.applyConstraints({
+              width: { ideal: 1920, max: 1920 },
+              height: { ideal: 1080, max: 1080 },
+              frameRate: { ideal: 60, max: 60 }
+            });
+            captureConstraintStatus = 'applied 1920x1080 @ 60 fps';
           } catch (constraintError) {
-            captureConstraintStatus = 'constraint rejected: ' + (constraintError.name || 'error');
+            try {
+              await captureTrack.applyConstraints({ frameRate: { ideal: 60, max: 60 } });
+              captureConstraintStatus = 'size rejected; applied 60 fps';
+            } catch (fpsConstraintError) {
+              captureConstraintStatus = 'constraint rejected: ' + (fpsConstraintError.name || constraintError.name || 'error');
+            }
           }
         }
         captureTrackSettings = captureTrack && typeof captureTrack.getSettings === 'function'
           ? captureTrack.getSettings()
           : {};
-        video.srcObject = stream;
-        await video.play();
         initializeCaptureWorker();
         var directTrackCapture = startTrackFramePump(captureTrack);
+        if (directTrackCapture) {
+          setDirectTrackPreview(true);
+        } else {
+          await startVideoFallbackCapture();
+        }
         stream.getTracks().forEach(function(track) { track.addEventListener('ended', stopCapture); });
         startBtn.disabled = true;
         stopBtn.disabled = false;
         statusEl.textContent = 'Capturing';
         detailEl.textContent = '';
-        if (!directTrackCapture) scheduleScan();
       } catch (err) {
         statusEl.textContent = 'Capture failed';
         detailEl.textContent = err.message || String(err);
@@ -441,6 +461,7 @@
       }
       asyncCaptureEnabled = false;
       capturePath = 'main-thread fallback';
+      setDirectTrackPreview(false);
       if (stream) {
         stream.getTracks().forEach(function(track) { track.stop(); });
         stream = null;
@@ -548,10 +569,13 @@
       transferStartedAt = 0;
       averagePacketRate = 0;
       averageVisualRate = 0;
-      if (raptorDecoder) {
-        try { raptorDecoder.free(); } catch (_) {}
-      }
-      raptorDecoder = null;
+      Object.keys(raptorDecoders).forEach(function(key) {
+        try { raptorDecoders[key].free(); } catch (_) {}
+      });
+      raptorDecoders = Object.create(null);
+      decodedChunks = [];
+      completedChunkCount = 0;
+      expectedChunkCount = 0;
       schedulePacketMapDraw();
     }
 
@@ -681,7 +705,7 @@
           captureWorker.terminate();
           captureWorker = null;
         }
-        scheduleScan();
+        startVideoFallbackCapture();
       };
     }
 
@@ -782,7 +806,30 @@
         asyncCaptureEnabled = false;
         capturePath = 'main-thread fallback';
       }
+      startVideoFallbackCapture();
+    }
+
+    function setDirectTrackPreview(enabled) {
+      preview.classList.toggle('direct-track', enabled);
+      capturePlaceholder.setAttribute('aria-hidden', enabled ? 'false' : 'true');
+      if (enabled) {
+        try { video.pause(); } catch (_) {}
+        video.srcObject = null;
+        drawOverlay();
+      }
+    }
+
+    async function startVideoFallbackCapture() {
+      if (!stream || decodedBlob || trackPumpActive) return false;
+      setDirectTrackPreview(false);
+      if (video.srcObject !== stream) video.srcObject = stream;
+      try {
+        await video.play();
+      } catch (err) {
+        lastDebug = { stage: 'video-preview-error', error: err.message || String(err) };
+      }
       scheduleScan();
+      return true;
     }
 
     function stopTrackFramePump() {
@@ -879,7 +926,7 @@
             captureWorker.terminate();
             captureWorker = null;
           }
-          scheduleScan();
+          startVideoFallbackCapture();
         }
       }
     }
@@ -1095,11 +1142,14 @@
     function acceptRaptorFrame(frame, packet) {
       if (!RaptorDecoder || !RaptorEncodingPacket) return;
       if (!expectedTotal) {
-        expectedTotal = frame.sourceSymbols;
+        expectedTotal = frame.totalSourceSymbols;
+        expectedChunkCount = frame.blockCount;
+        decodedChunks = new Array(expectedChunkCount);
         initGrid(expectedTotal);
       }
-      if (frame.sourceSymbols !== expectedTotal) return;
-      if (!raptorDecoder) raptorDecoder = RaptorDecoder.with_defaults(BigInt(frame.transferLength), frame.mtu);
+      if (frame.totalSourceSymbols !== expectedTotal || frame.blockCount !== expectedChunkCount || frame.blockIndex >= expectedChunkCount) return;
+      if (decodedChunks[frame.blockIndex]) return;
+      if (!raptorDecoders[frame.blockIndex]) raptorDecoders[frame.blockIndex] = RaptorDecoder.with_defaults(BigInt(frame.blockLength), frame.mtu);
 
       var packetInfo = getPacketInfo(packet, frame);
       if (seenPackets[packetInfo.key]) {
@@ -1114,12 +1164,24 @@
       lastPacketKind = packetInfo.kind;
       markPacketCell(packetInfo, frame);
 
-      var decoded = raptorDecoder.add(packet);
+      var decoded = raptorDecoders[frame.blockIndex].add(packet);
       updateProgress();
       updateStableDetail();
       if (decoded) {
-        markRecoveredCells();
-        finishDecode(decoded).catch(function(err) {
+        decodedChunks[frame.blockIndex] = new Uint8Array(decoded);
+        completedChunkCount++;
+        markRecoveredCells(frame.sourceOffset, frame.sourceSymbols);
+        try { raptorDecoders[frame.blockIndex].free(); } catch (_) {}
+        delete raptorDecoders[frame.blockIndex];
+        if (completedChunkCount !== expectedChunkCount) return;
+        var totalLength = decodedChunks.reduce(function(sum, chunk) { return sum + chunk.length; }, 0);
+        var packed = new Uint8Array(totalLength);
+        var offset = 0;
+        decodedChunks.forEach(function(chunk) {
+          packed.set(chunk, offset);
+          offset += chunk.length;
+        });
+        finishDecode(packed).catch(function(err) {
           statusEl.textContent = 'Verify failed';
           detailEl.textContent = err.message || String(err);
         });
@@ -1132,15 +1194,16 @@
 
     function getPacketInfo(packet, frame) {
       var visualKind = frame.packetIndex < frame.sourceSymbols ? 'source' : 'repair';
+      var globalIndex = visualKind === 'source' ? frame.sourceOffset + frame.packetIndex : -1;
       try {
         var parsed = RaptorEncodingPacket.deserialize(packet);
         var sbn = parsed.source_block_number();
         var esi = parsed.encoding_symbol_id();
-        var key = sbn + ':' + esi;
+        var key = frame.blockIndex + ':' + sbn + ':' + esi;
         parsed.free();
-        return { key: key, sbn: sbn, esi: esi, visualIndex: frame.packetIndex, kind: visualKind };
+        return { key: key, sbn: sbn, esi: esi, visualIndex: globalIndex, kind: visualKind };
       } catch (err) {
-        return { key: 'visual:' + frame.symbolIndex, sbn: 0, esi: frame.packetIndex, visualIndex: frame.packetIndex, kind: visualKind };
+        return { key: 'visual:' + frame.blockIndex + ':' + frame.symbolIndex, sbn: 0, esi: frame.packetIndex, visualIndex: globalIndex, kind: visualKind };
       }
     }
 
@@ -1169,28 +1232,30 @@
       if (!debug) return;
       var reason = [debug.parse2, debug.parse3].filter(Boolean).find(function(value) { return value.indexOf('checksum') === 0; }) || '';
       if (reason.indexOf('checksum') !== 0) return;
-      var total = Number(debug.parsedSourceSymbols || 0);
+      var total = Number(debug.parsedTotalSourceSymbols || 0);
+      var blockSymbols = Number(debug.parsedSourceSymbols || 0);
       var packetIndex = Number(debug.parsedPacketIndex);
-      if (!isFinite(total) || total < 1 || !isFinite(packetIndex) || packetIndex < 0 || packetIndex >= total) return;
+      var sourceOffset = Number(debug.parsedSourceOffset || 0);
+      if (!isFinite(total) || total < 1 || !isFinite(blockSymbols) || blockSymbols < 1 || !isFinite(packetIndex) || packetIndex < 0 || packetIndex >= blockSymbols) return;
       if (!expectedTotal) {
         expectedTotal = total;
         initGrid(expectedTotal);
       }
-      if (packetIndex >= packetStates.length || sourcePacketsSeen[packetIndex] || recoveredSourceSymbols.indexOf(packetIndex) !== -1) return;
-      if (!failedPacketsSeen[packetIndex]) {
-        failedPacketsSeen[packetIndex] = true;
+      var globalIndex = sourceOffset + packetIndex;
+      if (globalIndex >= packetStates.length || sourcePacketsSeen[globalIndex] || recoveredSourceSymbols.indexOf(globalIndex) !== -1) return;
+      if (!failedPacketsSeen[globalIndex]) {
+        failedPacketsSeen[globalIndex] = true;
         failedPacketCount++;
       }
-      packetStates[packetIndex] = 2;
+      packetStates[globalIndex] = 2;
       schedulePacketMapDraw();
       updateProgress();
     }
 
-    function markRecoveredCells() {
-      recoveredSourceSymbols = [];
-      for (var i = 0; i < expectedTotal; i++) {
+    function markRecoveredCells(sourceOffset, sourceCount) {
+      for (var i = sourceOffset; i < sourceOffset + sourceCount; i++) {
         if (!sourcePacketsSeen[i]) {
-          recoveredSourceSymbols.push(i);
+          if (recoveredSourceSymbols.indexOf(i) === -1) recoveredSourceSymbols.push(i);
           if (i < packetStates.length) packetStates[i] = 3;
         }
       }
@@ -1502,8 +1567,10 @@
           ['Payload bytes', frame.payloadBytes || PAYLOAD_BYTES || '-'],
           ['Packet len', frame.packetLen || '-'],
           ['Packet index', frame.packetIndex != null ? frame.packetIndex : '-'],
+          ['RaptorQ chunk', frame.blockCount ? (frame.blockIndex + 1) + ' / ' + frame.blockCount : '-'],
+          ['Decoded chunks', expectedChunkCount ? completedChunkCount + ' / ' + expectedChunkCount : '-'],
           ['Grid slot', frame.gridSlot != null ? frame.gridSlot : '-'],
-          ['Source symbols', frame.sourceSymbols || expectedTotal || '-'],
+          ['Source symbols', frame.totalSourceSymbols || expectedTotal || '-'],
           ['Cycle symbols', frame.cycleSymbols || '-']
         ]],
         ['Recovery', [

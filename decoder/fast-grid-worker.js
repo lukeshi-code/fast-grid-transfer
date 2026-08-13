@@ -7,6 +7,8 @@ var DATA_OFFSET_X = P.dataOffsetX;
 var DATA_OFFSET_Y = P.dataOffsetY;
 var DATA_COLS = P.dataCols;
 var DATA_ROWS = P.dataRows;
+var DATA_PHYSICAL_ROWS = P.dataPhysicalRows;
+var CALIBRATION_ROWS = P.calibrationRows;
 var DATA_CELLS = DATA_COLS * DATA_ROWS;
 var HEADER_BYTES = P.headerBytes;
 var FRAME_BYTES_2 = P.frameBytes2;
@@ -62,7 +64,7 @@ self.onmessage = async function(event) {
     lastDebugBox = null;
     lastDebug = {
       protocol: 'v' + PROTOCOL_VERSION,
-      geometry: TOTAL_COLS + 'x' + TOTAL_ROWS + ' / data ' + DATA_COLS + 'x' + DATA_ROWS,
+      geometry: TOTAL_COLS + 'x' + TOTAL_ROWS + ' / data ' + DATA_COLS + 'x' + DATA_ROWS + ' segmented',
       image: msg.image ? msg.image.width + 'x' + msg.image.height : '',
       stage: 'start',
       apriltagFound: 0,
@@ -151,7 +153,7 @@ function decodeGridFromHomography(image, homography, slot, marks, fromCache, cac
     lastDebug.bbox = formatBox(gridBox);
     lastDebug.dataBox = formatBox(dataBox);
     lastDebug.gridSlot = slot;
-    lastDebug.cellPx = Math.max(dataBox.width / DATA_COLS, dataBox.height / DATA_ROWS).toFixed(2);
+    lastDebug.cellPx = Math.max(dataBox.width / DATA_COLS, dataBox.height / TOTAL_ROWS).toFixed(2);
   }
 
   var sampleMap = cacheEntry && cacheEntry.sampleMap;
@@ -168,7 +170,7 @@ function decodeGridFromHomography(image, homography, slot, marks, fromCache, cac
     }).join(' | ');
   }
 
-  var sampleRadius = Math.max(1, Math.max(dataBox.width / DATA_COLS, dataBox.height / DATA_ROWS) * 0.22);
+  var sampleRadius = Math.max(1, Math.max(dataBox.width / DATA_COLS, dataBox.height / TOTAL_ROWS) * 0.22);
   if (lastDebug) lastDebug.stage = 'sample';
   if (!sampleCellsToKeys(data, w, h, sampleMap, sampleRadius)) {
     if (fromCache) delete homographyCache[slot];
@@ -216,8 +218,9 @@ function buildSampleMap(h) {
   var xy = new Float64Array(DATA_CELLS * 2);
   var index = 0;
   for (var gy = 0; gy < DATA_ROWS; gy++) {
+    var physicalY = DATA_PHYSICAL_ROWS[gy];
     for (var gx = 0; gx < DATA_COLS; gx++, index++) {
-      var p = project(h, DATA_OFFSET_X + gx + 0.5, DATA_OFFSET_Y + gy + 0.5);
+      var p = project(h, DATA_OFFSET_X + gx + 0.5, physicalY + 0.5);
       if (!p) return null;
       xy[index * 2] = p.x;
       xy[index * 2 + 1] = p.y;
@@ -443,7 +446,7 @@ function buildGridHomography(marks) {
 }
 
 function projectedDataBox(h) {
-  return projectedBox(h, DATA_OFFSET_X, DATA_OFFSET_Y, DATA_COLS, DATA_ROWS, 0.9);
+  return projectedBox(h, DATA_OFFSET_X, 0, DATA_COLS, TOTAL_ROWS, 0.9);
 }
 
 function projectedGridBox(h) {
@@ -467,7 +470,7 @@ function projectedBox(h, x, y, width, height, confidence) {
 
 function calibratePalette(data, w, h, homography) {
   var sums = PALETTE.map(function() { return [0, 0, 0, 0]; });
-  var rows = [3.5, TOTAL_ROWS - 3.5];
+  var rows = CALIBRATION_ROWS.map(function(row) { return row + 0.5; });
   for (var r = 0; r < rows.length; r++) {
     for (var i = 0; i < DATA_COLS; i++) {
       var colorIndex = i % 8;
@@ -490,18 +493,21 @@ function parseFrame(frame, bits, homography) {
   if (frame[0] !== 70 || frame[1] !== 71 || frame[2] !== 70 || frame[3] !== 50) return { frame: null, reason: 'magic' };
   if (frame[4] !== PROTOCOL_VERSION || frame[5] !== bits) return { frame: null, reason: 'version ' + frame[4] + '/' + frame[5] };
 
+  var blockIndex = frame[6];
+  var blockCount = frame[7];
   var symbolIndex = readU32(frame, 8);
   var sourceSymbols = readU32(frame, 12);
-  var transferLength = readU32(frame, 16);
+  var blockLength = readU32(frame, 16);
   var packetLen = readU16(frame, 20);
   var checksum = readU32(frame, 22);
   var payloadBytes = readU16(frame, 26);
   var mtu = readU16(frame, 28);
   var repairPacketsPerBlock = readU16(frame, 30);
-  var cycleSymbols = readU32(frame, 32);
+  var totalSourceSymbols = readU32(frame, 32);
   var dataCols = readU16(frame, 36);
   var dataRows = readU16(frame, 38);
   var packetIndex = readU32(frame, 40);
+  var sourceOffset = readU32(frame, 44);
   var transferIdLo = readU32(frame, 48);
   var transferIdHi = readU32(frame, 52);
   var expectedPayload = (bits === 3 ? FRAME_BYTES_3 : FRAME_BYTES_2) - HEADER_BYTES;
@@ -509,13 +515,16 @@ function parseFrame(frame, bits, homography) {
   if (lastDebug) {
     lastDebug.parsedBits = bits;
     lastDebug.parsedSourceSymbols = sourceSymbols;
+    lastDebug.parsedTotalSourceSymbols = totalSourceSymbols;
+    lastDebug.parsedSourceOffset = sourceOffset;
+    lastDebug.parsedBlockIndex = blockIndex;
     lastDebug.parsedSymbolIndex = symbolIndex;
     lastDebug.parsedPacketIndex = packetIndex;
     lastDebug.parsedPacketLen = packetLen;
   }
 
-  if (sourceSymbols < 1 || transferLength < 1 || packetLen < 5 || packetLen > expectedPayload) {
-    return { frame: null, reason: 'header packet=' + packetLen + ' src=' + sourceSymbols + ' len=' + transferLength };
+  if (blockCount < 1 || blockIndex >= blockCount || sourceSymbols < 1 || totalSourceSymbols < sourceSymbols || sourceOffset + sourceSymbols > totalSourceSymbols || blockLength < 1 || packetLen < 5 || packetLen > expectedPayload) {
+    return { frame: null, reason: 'header block=' + blockIndex + '/' + blockCount + ' packet=' + packetLen + ' src=' + sourceSymbols + '/' + totalSourceSymbols + ' len=' + blockLength };
   }
   if (payloadBytes !== expectedPayload || mtu + 4 > payloadBytes) {
     return { frame: null, reason: 'payload payload=' + payloadBytes + ' mtu=' + mtu + ' expected=' + expectedPayload };
@@ -533,14 +542,18 @@ function parseFrame(frame, bits, homography) {
   return {
     frame: {
       kind: 'raptorq',
+      blockIndex: blockIndex,
+      blockCount: blockCount,
       symbolIndex: symbolIndex,
       sourceSymbols: sourceSymbols,
-      transferLength: transferLength,
+      totalSourceSymbols: totalSourceSymbols,
+      sourceOffset: sourceOffset,
+      blockLength: blockLength,
       packetLen: packetLen,
       payloadBytes: payloadBytes,
       mtu: mtu,
       repairPacketsPerBlock: repairPacketsPerBlock,
-      cycleSymbols: cycleSymbols,
+      cycleSymbols: totalSourceSymbols,
       packetIndex: packetIndex,
       colorBits: bits,
       gridSlot: lastDebug ? lastDebug.gridSlot : 0,

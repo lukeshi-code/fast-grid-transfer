@@ -12,6 +12,9 @@ var PROTOCOL_VERSION = P.protocolVersion;
 var STREAM_VERSION = 4;
 var FLAG_FOLDER = 4;
 var FLAG_GZIP = 8;
+var RAPTOR_CHUNK_BYTES = 16 * 1024 * 1024;
+var MAX_RAPTOR_BLOCKS = 255;
+var PACKET_CACHE_BLOCKS = 2;
 
 var fileName = '';
 var fileSize = 0;
@@ -29,12 +32,15 @@ var streamBytes = null;
 var streamLength = 0;
 var sourceSymbols = 0;
 var repairPacketsPerBlock = 0;
-var packets = [];
-var packetSchedule = [];
+var raptorBlocks = [];
+var totalSourceSymbols = 0;
+var cycleSymbols = 0;
+var packetCache = new Map();
 var raptorReady = null;
 var RaptorEncoder = null;
 var transferIdLo = 0;
 var transferIdHi = 0;
+var sourceFileCount = 0;
 
 self.onmessage = function(event) {
   var msg = event.data;
@@ -68,25 +74,31 @@ async function initRaptor() {
 }
 
 async function loadFile(nextFile) {
+  var startedAt = performance.now();
   fileName = nextFile.name || 'file.bin';
   fileSize = nextFile.size || 0;
+  sourceFileCount = 1;
   sourceKind = 'file';
   payloadSegments = [{ type: 'file', file: nextFile, offset: 0, length: fileSize }];
-  await prepareStream(fileName, fileSize);
+  await prepareStream(fileName, fileSize, startedAt);
 }
 
 async function loadFolder(files) {
+  var startedAt = performance.now();
   var list = Array.prototype.slice.call(files || []).filter(function(f) { return f && f.size >= 0; });
+  sourceFileCount = list.length;
+  postPrepareProgress('Indexing folder', sourceFileCount + ' files', 3, startedAt);
   var root = getFolderRoot(list) || 'folder';
   sourceKind = 'folder';
   fileName = root + '.tar';
   payloadSegments = buildTarSegments(list);
   fileSize = payloadSegments.reduce(function(sum, segment) { return sum + segment.length; }, 0);
-  await prepareStream(fileName, fileSize);
+  await prepareStream(fileName, fileSize, startedAt);
 }
 
-async function prepareStream(name, size) {
-  await initRaptor();
+async function prepareStream(name, size, prepareStartedAt) {
+  postPrepareProgress('Reading source', sourceKind === 'folder' ? sourceFileCount + ' files' : name, 10, prepareStartedAt);
+  var raptorPromise = initRaptor();
   generateTransferId();
 
   var nameBytes = new TextEncoder().encode(name);
@@ -99,9 +111,10 @@ async function prepareStream(name, size) {
   writeU32(streamHeader, 12, 32);
   streamHeader.set(nameBytes, 48);
 
-  var sourceBytes = new Uint8Array(size);
-  await fillPayloadRange(sourceBytes, 0, 0, size);
+  var sourceBytes = await materializePayload(size);
+  postPrepareProgress('Calculating SHA-256', formatBytes(size), 35, prepareStartedAt);
   var digest = new Uint8Array(await crypto.subtle.digest('SHA-256', sourceBytes));
+  postPrepareProgress('Compressing stream', formatBytes(size), 55, prepareStartedAt);
   var transferBytes = await maybeCompress(sourceBytes);
   compressionKind = transferBytes === sourceBytes ? 'none' : 'gzip';
   compressedSize = transferBytes.length;
@@ -113,13 +126,12 @@ async function prepareStream(name, size) {
   streamBytes.set(digest, 16);
   streamBytes.set(transferBytes, streamHeader.length);
 
-  sourceSymbols = Math.ceil(streamLength / rqMtu);
-  repairPacketsPerBlock = Math.min(512, Math.max(16, Math.ceil(sourceSymbols * 0.22)));
-
-  var encoder = RaptorEncoder.with_defaults(streamBytes, rqMtu);
-  packets = encoder.encode(repairPacketsPerBlock);
-  packetSchedule = buildPacketSchedule(sourceSymbols, packets.length);
-  encoder.free();
+  buildRaptorBlocks();
+  postPrepareProgress('Initializing RaptorQ', raptorBlocks.length + ' chunks, ' + totalSourceSymbols + ' source symbols', 75, prepareStartedAt);
+  await raptorPromise;
+  postPrepareProgress('Preparing first RaptorQ chunks', raptorBlocks.length + ' chunks total', 88, prepareStartedAt);
+  await getBlockPackets(0);
+  if (raptorBlocks.length > 1) await getBlockPackets(1);
 
   self.postMessage({
     type: 'loaded',
@@ -130,8 +142,8 @@ async function prepareStream(name, size) {
       compression: compressionKind,
       compressedSize: compressedSize,
       streamLength: streamLength,
-      totalFrames: sourceSymbols,
-      cycleSymbols: packetSchedule.length,
+      totalFrames: totalSourceSymbols,
+      cycleSymbols: cycleSymbols,
       payloadBytes: payloadBytes,
       raptorPacketBytes: rqMtu + 4,
       headerBytes: HEADER_BYTES,
@@ -140,9 +152,112 @@ async function prepareStream(name, size) {
       colorBits: colorBits,
       raptorq: true,
       repairPacketsPerBlock: repairPacketsPerBlock,
+      raptorBlocks: raptorBlocks.length,
+      raptorChunkBytes: RAPTOR_CHUNK_BYTES,
+      sourceFileCount: sourceFileCount,
+      prepareMs: performance.now() - prepareStartedAt,
       transferId: formatTransferId(transferIdHi, transferIdLo)
     }
   });
+}
+
+async function materializePayload(size) {
+  if (payloadSegments.length === 1 && payloadSegments[0].type === 'file' && payloadSegments[0].length === size) {
+    return new Uint8Array(await payloadSegments[0].file.arrayBuffer());
+  }
+  var parts = payloadSegments.map(function(segment) {
+    if (segment.type === 'bytes') return segment.bytes;
+    if (segment.type === 'file') return segment.file;
+    return new Uint8Array(segment.length);
+  });
+  return new Uint8Array(await new Blob(parts).arrayBuffer());
+}
+
+function postPrepareProgress(stage, detail, percent, startedAt) {
+  self.postMessage({
+    type: 'prepare-progress',
+    stage: stage,
+    detail: detail || '',
+    percent: percent,
+    elapsedMs: performance.now() - startedAt
+  });
+}
+
+function formatBytes(value) {
+  if (value < 1024) return value + ' B';
+  if (value < 1024 * 1024) return (value / 1024).toFixed(1) + ' KB';
+  return (value / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
+function buildRaptorBlocks() {
+  var blockCount = Math.ceil(streamLength / RAPTOR_CHUNK_BYTES);
+  if (blockCount > MAX_RAPTOR_BLOCKS) throw new Error('Transfer is too large; maximum encoded stream size is ' + formatBytes(RAPTOR_CHUNK_BYTES * MAX_RAPTOR_BLOCKS));
+  raptorBlocks = [];
+  packetCache = new Map();
+  totalSourceSymbols = 0;
+  cycleSymbols = 0;
+  repairPacketsPerBlock = 0;
+  for (var blockIndex = 0; blockIndex < blockCount; blockIndex++) {
+    var offset = blockIndex * RAPTOR_CHUNK_BYTES;
+    var length = Math.min(RAPTOR_CHUNK_BYTES, streamLength - offset);
+    var blockSourceSymbols = Math.ceil(length / rqMtu);
+    var repairs = Math.min(512, Math.max(16, Math.ceil(blockSourceSymbols * 0.22)));
+    var schedule = buildPacketSchedule(blockSourceSymbols, blockSourceSymbols + repairs);
+    raptorBlocks.push({
+      index: blockIndex,
+      offset: offset,
+      length: length,
+      sourceSymbols: blockSourceSymbols,
+      sourceOffset: totalSourceSymbols,
+      repairPackets: repairs,
+      cycleOffset: cycleSymbols,
+      schedule: schedule
+    });
+    totalSourceSymbols += blockSourceSymbols;
+    cycleSymbols += schedule.length;
+    repairPacketsPerBlock = Math.max(repairPacketsPerBlock, repairs);
+  }
+  sourceSymbols = totalSourceSymbols;
+}
+
+async function getBlockPackets(blockIndex) {
+  if (packetCache.has(blockIndex)) {
+    var cached = packetCache.get(blockIndex);
+    packetCache.delete(blockIndex);
+    packetCache.set(blockIndex, cached);
+    return cached;
+  }
+  var block = raptorBlocks[blockIndex];
+  if (!block) throw new Error('Invalid RaptorQ chunk ' + blockIndex);
+  var encoder = RaptorEncoder.with_defaults(streamBytes.subarray(block.offset, block.offset + block.length), rqMtu);
+  var nextPackets;
+  try {
+    nextPackets = encoder.encode(block.repairPackets);
+  } finally {
+    encoder.free();
+  }
+  if (nextPackets.length !== block.schedule.length) {
+    throw new Error('RaptorQ chunk ' + (blockIndex + 1) + ' returned ' + nextPackets.length + ' packets; expected ' + block.schedule.length);
+  }
+  for (var packetIndex = 0; packetIndex < nextPackets.length; packetIndex++) {
+    if (!nextPackets[packetIndex]) throw new Error('RaptorQ chunk ' + (blockIndex + 1) + ' returned an empty packet at ' + packetIndex);
+  }
+  packetCache.set(blockIndex, nextPackets);
+  while (packetCache.size > PACKET_CACHE_BLOCKS) packetCache.delete(packetCache.keys().next().value);
+  return nextPackets;
+}
+
+function findRaptorBlock(scheduleIndex) {
+  var lo = 0;
+  var hi = raptorBlocks.length - 1;
+  while (lo <= hi) {
+    var mid = (lo + hi) >> 1;
+    var block = raptorBlocks[mid];
+    if (scheduleIndex < block.cycleOffset) hi = mid - 1;
+    else if (scheduleIndex >= block.cycleOffset + block.schedule.length) lo = mid + 1;
+    else return block;
+  }
+  return null;
 }
 
 async function maybeCompress(bytes) {
@@ -157,30 +272,36 @@ async function maybeCompress(bytes) {
 
 async function buildFrame(symbolIndex) {
   symbolIndex = Math.floor(Number(symbolIndex));
-  if (!packets.length || !packetSchedule.length || !isFinite(symbolIndex) || symbolIndex < 0) return;
-  var scheduleIndex = symbolIndex % packetSchedule.length;
-  var packetIndex = packetSchedule[scheduleIndex];
-  var packet = packets[packetIndex];
+  if (!raptorBlocks.length || !cycleSymbols || !isFinite(symbolIndex) || symbolIndex < 0) return;
+  var scheduleIndex = symbolIndex % cycleSymbols;
+  var block = findRaptorBlock(scheduleIndex);
+  if (!block) throw new Error('No RaptorQ chunk for visual symbol ' + scheduleIndex);
+  var localScheduleIndex = scheduleIndex - block.cycleOffset;
+  var packetIndex = block.schedule[localScheduleIndex];
+  var blockPackets = await getBlockPackets(block.index);
+  var packet = blockPackets[packetIndex];
+  if (!packet) throw new Error('RaptorQ chunk ' + (block.index + 1) + ' packet ' + packetIndex + ' is unavailable');
   if (packet.length > payloadBytes) throw new Error('RaptorQ packet exceeds visual payload');
 
   var frame = new Uint8Array(frameBytes);
   frame[0] = 70; frame[1] = 71; frame[2] = 70; frame[3] = 50;
   frame[4] = PROTOCOL_VERSION;
   frame[5] = colorBits;
-  writeU16(frame, 6, 0);
+  frame[6] = block.index;
+  frame[7] = raptorBlocks.length;
   writeU32(frame, 8, symbolIndex >>> 0);
-  writeU32(frame, 12, sourceSymbols >>> 0);
-  writeU32(frame, 16, streamLength >>> 0);
+  writeU32(frame, 12, block.sourceSymbols >>> 0);
+  writeU32(frame, 16, block.length >>> 0);
   writeU16(frame, 20, packet.length);
   writeU32(frame, 22, 0);
   writeU16(frame, 26, payloadBytes);
   writeU16(frame, 28, rqMtu);
-  writeU16(frame, 30, repairPacketsPerBlock);
-  writeU32(frame, 32, packetSchedule.length >>> 0);
+  writeU16(frame, 30, block.repairPackets);
+  writeU32(frame, 32, totalSourceSymbols >>> 0);
   writeU16(frame, 36, DATA_COLS);
   writeU16(frame, 38, DATA_ROWS);
   writeU32(frame, 40, packetIndex >>> 0);
-  writeU32(frame, 44, scheduleIndex >>> 0);
+  writeU32(frame, 44, block.sourceOffset >>> 0);
   writeU32(frame, 48, transferIdLo);
   writeU32(frame, 52, transferIdHi);
   frame.set(packet, HEADER_BYTES);
@@ -190,7 +311,7 @@ async function buildFrame(symbolIndex) {
     type: 'frame',
     symbolIndex: symbolIndex,
     frame: frame.buffer,
-    plan: { kind: 'raptorq', packetIndex: packetIndex, scheduleIndex: scheduleIndex }
+    plan: { kind: 'raptorq', blockIndex: block.index, packetIndex: packetIndex, scheduleIndex: scheduleIndex }
   }, [frame.buffer]);
 }
 

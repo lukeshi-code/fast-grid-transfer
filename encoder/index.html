@@ -182,13 +182,17 @@
     </div>
   </main>
 
+  <script src="../shared/protocol.js"></script>
   <script>
-    var TOTAL_COLS = 360;
-    var TOTAL_ROWS = 112;
-    var DATA_OFFSET_X = 18;
-    var DATA_OFFSET_Y = 18;
-    var DATA_COLS = 324;
-    var DATA_ROWS = 76;
+    var GRID_PROTOCOL = window.FastGridProtocol || createProtocolFallback();
+    var TOTAL_COLS = GRID_PROTOCOL.totalCols;
+    var TOTAL_ROWS = GRID_PROTOCOL.totalRows;
+    var DATA_OFFSET_X = GRID_PROTOCOL.dataOffsetX;
+    var DATA_COLS = GRID_PROTOCOL.dataCols;
+    var DATA_ROWS = GRID_PROTOCOL.dataRows;
+    var DATA_PHYSICAL_ROWS = GRID_PROTOCOL.dataPhysicalRows;
+    var CALIBRATION_ROWS = GRID_PROTOCOL.calibrationRows;
+    var SYNC_ROWS = GRID_PROTOCOL.syncRows;
     var MARKER_CELLS = 18;
     var GRID_COUNT = 2;
     var APRILTAG_BASES = [0, 4];
@@ -249,7 +253,7 @@
       return new Uint32Array(image.data.buffer);
     });
     var logicalBasePixels = buildLogicalBasePixels();
-    var worker = new Worker('fast-grid-encoder-worker.js');
+    var worker = createEncoderWorker();
 
     var meta = null;
     var frameIndex = 0;
@@ -287,10 +291,21 @@
     var renderWindowMax = 0;
     var renderAverageMs = 0;
     var renderMaxMs = 0;
+    var prepareStage = '';
+    var prepareDetail = '';
+    var prepareStartedAt = 0;
 
-    worker.onmessage = function(event) {
+    function handleWorkerMessage(event) {
       var msg = event.data;
+      if (msg.type === 'prepare-progress') {
+        prepareStage = msg.stage;
+        prepareDetail = msg.detail || '';
+        prepareStartedAt = performance.now() - msg.elapsedMs;
+        renderPrepareProgress();
+        progress.style.width = Math.max(0, Math.min(100, msg.percent || 0)) + '%';
+      }
       if (msg.type === 'loaded') {
+        prepareStage = '';
         meta = msg.meta;
         frameIndex = 0;
         frameCache = {};
@@ -299,7 +314,7 @@
         lastDrawnFrames = [];
         resetRuntimeRates();
         fileMeta.textContent = meta.name;
-        encodeMeta.textContent = formatSize(meta.fileSize) + ' source, ' + formatSize(meta.streamLength) + ' transfer stream, ' + meta.totalFrames + ' source symbols, ' + meta.payloadBytes + ' bytes/frame/grid, 2-grid RaptorQ ' + DATA_COLS + 'x' + DATA_ROWS + ' rectangular ' + (meta.colorBits === 3 ? '8-color' : '4-color') + (meta.compression === 'gzip' ? ', gzip ' + formatSize(meta.compressedSize) : '') + (meta.kind === 'folder' ? ', folder tar' : '');
+        encodeMeta.textContent = formatSize(meta.fileSize) + ' source, ' + formatSize(meta.streamLength) + ' transfer stream, ' + meta.totalFrames + ' source symbols, ' + meta.payloadBytes + ' bytes/frame/grid, 2-grid RaptorQ ' + DATA_COLS + 'x' + DATA_ROWS + ' segmented ' + (meta.colorBits === 3 ? '8-color' : '4-color') + ', ' + meta.raptorBlocks + ' chunks' + (meta.compression === 'gzip' ? ', gzip ' + formatSize(meta.compressedSize) : '') + (meta.kind === 'folder' ? ', ' + meta.sourceFileCount + ' files, folder tar' : '') + ', prepared in ' + (meta.prepareMs / 1000).toFixed(1) + 's';
         playBtn.disabled = !markersReady;
         pauseBtn.disabled = !markersReady;
         if (!markersReady) encodeMeta.textContent += ', loading 8 AprilTag markers';
@@ -321,11 +336,23 @@
       if (msg.type === 'error') {
         showWorkerError(msg.message || 'Worker error');
       }
-    };
+    }
 
-    worker.onerror = function(err) {
+    function handleWorkerError(err) {
       showWorkerError(err.message || 'Worker error');
-    };
+    }
+
+    function createEncoderWorker() {
+      var nextWorker = new Worker('fast-grid-encoder-worker.js');
+      nextWorker.onmessage = handleWorkerMessage;
+      nextWorker.onerror = handleWorkerError;
+      return nextWorker;
+    }
+
+    function restartEncoderWorker() {
+      if (worker) worker.terminate();
+      worker = createEncoderWorker();
+    }
 
     fpsInput.addEventListener('input', function() {
       fps = Number(fpsInput.value);
@@ -339,8 +366,14 @@
       if (currentSource) loadSource(currentSource);
     });
 
-    chooseFileBtn.addEventListener('click', function() { fileInput.click(); });
-    chooseFolderBtn.addEventListener('click', function() { folderInput.click(); });
+    chooseFileBtn.addEventListener('click', function() {
+      fileInput.value = '';
+      fileInput.click();
+    });
+    chooseFolderBtn.addEventListener('click', function() {
+      folderInput.value = '';
+      folderInput.click();
+    });
 
     fileInput.addEventListener('change', function() {
       var file = fileInput.files && fileInput.files[0];
@@ -377,6 +410,10 @@
 
     function loadSource(source) {
       stopPlayback();
+      restartEncoderWorker();
+      prepareStage = 'Starting worker';
+      prepareDetail = '';
+      prepareStartedAt = performance.now();
       meta = null;
       frameIndex = 0;
       frameCache = {};
@@ -396,8 +433,33 @@
       worker.postMessage(message);
     }
 
+    function renderPrepareProgress() {
+      if (!prepareStage) return;
+      var elapsed = Math.max(0, performance.now() - prepareStartedAt);
+      encodeMeta.textContent = prepareStage + (prepareDetail ? ' · ' + prepareDetail : '') + ' · ' + (elapsed / 1000).toFixed(1) + 's';
+    }
+
+    function createProtocolFallback() {
+      var reservedRows = { 3: true, 17: true, 94: true, 108: true };
+      var physicalRows = [];
+      for (var row = 0; row < 112; row++) {
+        if (!reservedRows[row]) physicalRows.push(row);
+      }
+      return {
+        totalCols: 360,
+        totalRows: 112,
+        dataOffsetX: 18,
+        dataCols: 324,
+        dataRows: physicalRows.length,
+        dataPhysicalRows: physicalRows,
+        calibrationRows: [3, 108],
+        syncRows: [17, 94]
+      };
+    }
+
     function showWorkerError(message) {
       stopPlayback();
+      prepareStage = '';
       pendingFrames = {};
       encodeMeta.textContent = 'Worker error: ' + message;
       frameMeta.textContent = 'Frame ' + (meta ? frameIndex + 1 : 0) + ' / ' + (meta ? meta.totalFrames : 0) + ' (error)';
@@ -547,11 +609,12 @@
 
       if (frame) {
         for (var y = 0; y < DATA_ROWS; y++) {
+          var physicalY = DATA_PHYSICAL_ROWS[y];
           for (var x = 0; x < DATA_COLS; x++) {
             var cellIndex = y * DATA_COLS + x;
             var bits = meta && meta.colorBits === 3 ? 3 : 2;
             var v = readBits(frame, cellIndex, bits);
-            pixels[(y + DATA_OFFSET_Y) * TOTAL_COLS + x + DATA_OFFSET_X] = COLOR_PIXELS[v];
+            pixels[physicalY * TOTAL_COLS + x + DATA_OFFSET_X] = COLOR_PIXELS[v];
           }
         }
       }
@@ -679,24 +742,25 @@
       var pixels = new Uint32Array(TOTAL_COLS * TOTAL_ROWS);
       pixels.fill(BACKGROUND_PIXEL);
 
-      for (var i = DATA_OFFSET_X; i < DATA_OFFSET_X + DATA_COLS; i++) {
-        var syncPixel = COLOR_PIXELS[(i & 1) ? 1 : 0];
-        pixels[(DATA_OFFSET_Y - 1) * TOTAL_COLS + i] = syncPixel;
-        pixels[(DATA_OFFSET_Y + DATA_ROWS) * TOTAL_COLS + i] = syncPixel;
+      for (var syncIndex = 0; syncIndex < SYNC_ROWS.length; syncIndex++) {
+        var syncRow = SYNC_ROWS[syncIndex];
+        for (var i = DATA_OFFSET_X; i < DATA_OFFSET_X + DATA_COLS; i++) {
+          pixels[syncRow * TOTAL_COLS + i] = COLOR_PIXELS[(i & 1) ? 1 : 0];
+        }
       }
-      for (var j = DATA_OFFSET_Y; j < DATA_OFFSET_Y + DATA_ROWS; j++) {
-        var edgePixel = COLOR_PIXELS[(j & 1) ? 1 : 0];
-        pixels[j * TOTAL_COLS + DATA_OFFSET_X - 1] = edgePixel;
-        pixels[j * TOTAL_COLS + DATA_OFFSET_X + DATA_COLS] = edgePixel;
+      for (var edgeRow = SYNC_ROWS[0] + 1; edgeRow < SYNC_ROWS[1]; edgeRow++) {
+        var edgePixel = COLOR_PIXELS[(edgeRow & 1) ? 1 : 0];
+        pixels[edgeRow * TOTAL_COLS + DATA_OFFSET_X - 1] = edgePixel;
+        pixels[edgeRow * TOTAL_COLS + DATA_OFFSET_X + DATA_COLS] = edgePixel;
       }
 
-      var topRow = 3;
-      var bottomRow = TOTAL_ROWS - 4;
-      for (var colorIndex = 0; colorIndex < DATA_COLS; colorIndex++) {
-        var colorPixel = COLOR_PIXELS[colorIndex % COLOR_PIXELS.length];
-        var column = DATA_OFFSET_X + colorIndex;
-        pixels[topRow * TOTAL_COLS + column] = colorPixel;
-        pixels[bottomRow * TOTAL_COLS + column] = colorPixel;
+      for (var calibrationIndex = 0; calibrationIndex < CALIBRATION_ROWS.length; calibrationIndex++) {
+        var calibrationRow = CALIBRATION_ROWS[calibrationIndex];
+        for (var colorIndex = 0; colorIndex < DATA_COLS; colorIndex++) {
+          var colorPixel = COLOR_PIXELS[colorIndex % COLOR_PIXELS.length];
+          var column = DATA_OFFSET_X + colorIndex;
+          pixels[calibrationRow * TOTAL_COLS + column] = colorPixel;
+        }
       }
       return pixels;
     }
@@ -746,6 +810,7 @@
 
     function updateRuntimeRates() {
       var now = performance.now();
+      renderPrepareProgress();
       var elapsed = (now - runtimeRateAt) / 1000;
       if (elapsed < 0.8) return;
       actualEncodeRate = (encodedGridCount - lastEncodedGridCount) / elapsed;
