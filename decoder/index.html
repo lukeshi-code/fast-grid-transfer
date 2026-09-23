@@ -181,6 +181,8 @@
     var VERIFIED_FINGERPRINT_LIMIT = 128;
     var ROI_SCAN_MAX_WIDTH = 1920;
     var FULL_SCAN_MAX_WIDTH = 1920;
+    var MIN_SCAN_WIDTH = 1280;
+    var MAX_SCAN_PIXELS = 1920 * 1080;
     var workers = [];
     var workerStates = [];
     var nextWorkerHint = 0;
@@ -620,10 +622,10 @@
       }
 
       var source = getScanSource(vw, vh);
-      var maxW = source.roi ? ROI_SCAN_MAX_WIDTH : FULL_SCAN_MAX_WIDTH;
-      var scale = Math.min(1, maxW / source.sw);
-      var targetW = Math.max(1, Math.round(source.sw * scale));
-      var targetH = Math.max(1, Math.round(source.sh * scale));
+      var scanSize = getScanSize(source);
+      var scale = scanSize.scale;
+      var targetW = scanSize.width;
+      var targetH = scanSize.height;
       var frameSeq = deliveredFrames;
       var scan = {
         sx: source.sx,
@@ -763,10 +765,10 @@
 
       deliveredFrames++;
       var source = getScanSource(vw, vh);
-      var maxW = source.roi ? ROI_SCAN_MAX_WIDTH : FULL_SCAN_MAX_WIDTH;
-      var scale = Math.min(1, maxW / source.sw);
-      var targetW = Math.max(1, Math.round(source.sw * scale));
-      var targetH = Math.max(1, Math.round(source.sh * scale));
+      var scanSize = getScanSize(source);
+      var scale = scanSize.scale;
+      var targetW = scanSize.width;
+      var targetH = scanSize.height;
       var scan = {
         sx: source.sx,
         sy: source.sy,
@@ -1072,6 +1074,22 @@
       var count = 0;
       workerStates.forEach(function(state) { if (state.busy) count++; });
       return count;
+    }
+
+    function getScanSize(source) {
+      var maxWidth = source.roi ? ROI_SCAN_MAX_WIDTH : FULL_SCAN_MAX_WIDTH;
+      var sourcePixels = Math.max(1, source.sw * source.sh);
+      var maxScale = Math.min(maxWidth / source.sw, Math.sqrt(MAX_SCAN_PIXELS / sourcePixels));
+      // A compact encoder window can have only one or two physical pixels per
+      // visual cell.  Pixel-perfect upscaling makes the AprilTags large enough
+      // for the detector without asking the sender to resize its window.
+      var desiredScale = source.sw < MIN_SCAN_WIDTH ? MIN_SCAN_WIDTH / source.sw : 1;
+      var scale = Math.min(maxScale, desiredScale);
+      return {
+        scale: scale,
+        width: Math.max(1, Math.round(source.sw * scale)),
+        height: Math.max(1, Math.round(source.sh * scale))
+      };
     }
 
     function getScanSource(vw, vh) {

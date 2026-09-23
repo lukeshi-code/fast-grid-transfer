@@ -103,6 +103,54 @@ test('capture preprocessor returns transferable image data', function() {
   assert.deepEqual(drawArgs.slice(1), [1, 2, 6, 4, 0, 0, 4, 2]);
 });
 
+test('large-file incremental SHA-256 matches the standard digest across chunk boundaries', function() {
+  var protocolContext = {};
+  vm.runInNewContext(read('shared/protocol.js'), protocolContext);
+  var workerContext = {
+    self: { FastGridProtocol: protocolContext.FastGridProtocol },
+    importScripts: function() {},
+    TextEncoder: TextEncoder,
+    Uint8Array: Uint8Array,
+    Uint32Array: Uint32Array,
+    Map: Map,
+    Math: Math,
+    performance: { now: function() { return 0; } }
+  };
+  vm.runInNewContext(read('encoder/fast-grid-encoder-worker.js'), workerContext);
+  var hasher = new workerContext.Sha256();
+  hasher.update(new TextEncoder().encode('The quick brown '));
+  hasher.update(new TextEncoder().encode('fox jumps over the lazy dog'));
+  assert.equal(
+    Buffer.from(hasher.digest()).toString('hex'),
+    'd7a8fbb307d7809469ca9abcb0082e4f8d5651e46d3cdb762d02d0bf37c9e592'
+  );
+});
+
+test('on-demand stream blocks preserve the header and source byte offsets', async function() {
+  var protocolContext = {};
+  vm.runInNewContext(read('shared/protocol.js'), protocolContext);
+  var workerContext = {
+    self: { FastGridProtocol: protocolContext.FastGridProtocol },
+    importScripts: function() {},
+    TextEncoder: TextEncoder,
+    Uint8Array: Uint8Array,
+    Uint32Array: Uint32Array,
+    Map: Map,
+    Math: Math,
+    performance: { now: function() { return 0; } }
+  };
+  vm.runInNewContext(read('encoder/fast-grid-encoder-worker.js'), workerContext);
+  var source = new Uint8Array([10, 11, 12, 13, 14, 15]);
+  workerContext.streamBytes = null;
+  workerContext.streamHeader = new Uint8Array([1, 2, 3, 4]);
+  workerContext.payloadSegments = [{
+    type: 'file', offset: 0, length: source.length,
+    file: { slice: function(start, end) { return { arrayBuffer: async function() { return source.slice(start, end).buffer; } }; } }
+  }];
+  assert.deepEqual(Array.from(await workerContext.readStreamRange(0, 7)), [1, 2, 3, 4, 10, 11, 12]);
+  assert.deepEqual(Array.from(await workerContext.readStreamRange(5, 4)), [11, 12, 13, 14]);
+});
+
 test('protocol geometry and synchronized frame rates stay aligned', function() {
   var protocol = read('shared/protocol.js');
   var protocolContext = {};
@@ -131,6 +179,9 @@ test('protocol geometry and synchronized frame rates stay aligned', function() {
   assert.match(encoder, /restartEncoderWorker\(\)/);
   assert.match(encoder, /msg\.type\s*===\s*'prepare-progress'/);
   assert.match(encoderWorker, /RAPTOR_CHUNK_BYTES\s*=\s*16\s*\*\s*1024\s*\*\s*1024/);
+  assert.match(encoderWorker, /LARGE_FILE_STREAM_THRESHOLD\s*=\s*32\s*\*\s*1024\s*\*\s*1024/);
+  assert.match(encoderWorker, /function hashPayloadIncrementally\(/);
+  assert.match(encoderWorker, /function readStreamRange\(/);
   assert.match(encoderWorker, /new Blob\(parts\)\.arrayBuffer\(\)/);
   assert.match(encoderWorker, /function buildRaptorBlocks\(/);
   assert.match(encoderWorker, /frame\[6\]\s*=\s*block\.index/);
@@ -160,6 +211,8 @@ test('protocol geometry and synchronized frame rates stay aligned', function() {
   assert.match(encoder, /Encode ['"]?\s*\+/);
   assert.doesNotMatch(decoder, /\['Capture cap'/);
   assert.match(decoder, /CAPTURE_FPS_LIMIT\s*=\s*60/);
+  assert.match(decoder, /MIN_SCAN_WIDTH\s*=\s*1280/);
+  assert.match(decoder, /function getScanSize\(source\)/);
   assert.match(decoder, /requestVideoFrameCallback\(scanFrame\)/);
   assert.match(decoder, /new MediaStreamTrackProcessor\(\{\s*track:\s*track,\s*maxBufferSize:\s*1\s*\}\)/);
   assert.match(decoder, /trackProcessor\.readable\.getReader\(\)/);

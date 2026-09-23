@@ -639,11 +639,15 @@
         var rect = stage.getBoundingClientRect();
         visible = Math.floor(Math.min(rect.width / TOTAL_COLS, ((rect.height - 4) / 2) / TOTAL_ROWS));
       }
-      var cellPx = Math.max(2, Math.floor(visible));
+      // Do not force a two-pixel cell when the window is shorter than two
+      // complete grids.  That previously clipped the lower grid, so the
+      // decoder could never see the required pair until the user resized.
+      var cellPx = Math.max(1, Math.floor(visible));
       var optimalW = TOTAL_COLS * cellPx;
       var optimalH = TOTAL_ROWS * cellPx;
       var targetText = minCellPx > 6 ? ' (8-color target ' + minCellPx + ' px)' : '';
-      canvasMeta.textContent = 'Display: ' + optimalW + ' x ' + optimalH + ' px, backing ' + TOTAL_COLS + ' x ' + TOTAL_ROWS + ', ' + cellPx.toFixed(1) + ' px/cell' + targetText;
+      var lowResolutionText = cellPx < 2 ? ' (compact display; decoder will upscale capture)' : '';
+      canvasMeta.textContent = 'Display: ' + optimalW + ' x ' + optimalH + ' px, backing ' + TOTAL_COLS + ' x ' + TOTAL_ROWS + ', ' + cellPx.toFixed(1) + ' px/cell' + targetText + lowResolutionText;
       var changed = false;
       canvases.forEach(function(nextCanvas) {
         var styleWidth = optimalW + 'px';
